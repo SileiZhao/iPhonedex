@@ -22,6 +22,21 @@ pnpm --filter @codex-monitor/relay build
 
 把仓库构建产物同步到 `/opt/codex-monitor/app`。如果使用 Docker Compose，容器会以只读方式挂载该目录。
 
+## 本地真机联调
+
+本地 smoke 脚本会在 Mac 上用内存数据库启动 server，并写入一条 `thread.started` 和一条 `approval.requested` 测试事件，方便 iPhone 真机页面直接看到任务状态。
+
+```bash
+scripts/local-smoke.sh
+```
+
+脚本启动参数固定为本地联调用途：`HOST=0.0.0.0 PORT=8787 DATABASE_URL=:memory: RELAY_TOKEN=relay-secret MOBILE_TOKEN=mobile-secret`。启动后在 iPhone App 首屏填写：
+
+- Server URL: `http://<Mac局域网IP>:8787`
+- Mobile Token: `mobile-secret`
+
+该配置只用于 Mac 与 iPhone 在同一局域网内的本地联调，不要用于公网或生产部署。
+
 ## Docker Compose 部署
 
 生成 token：
@@ -84,6 +99,21 @@ sudo systemctl status codex-monitor
 ## Nginx 子域名方式
 
 推荐给 `monitor.example.com` 增加 DNS 记录，然后把 `deploy/nginx/codex-monitor-subdomain.conf` 作为新增站点配置安装。不要覆盖公司官网配置文件。
+
+如果服务器已有官网证书和 Certbot 任务，不要复用或改写官网站点文件。先为监控子域名单独签发证书；模板默认使用 Certbot 的标准路径：
+
+```bash
+sudo certbot certonly --nginx -d monitor.example.com
+```
+
+如果你的证书路径不同，再把模板中的两行证书配置改成实际路径：
+
+```nginx
+ssl_certificate /etc/letsencrypt/live/monitor.example.com/fullchain.pem;
+ssl_certificate_key /etc/letsencrypt/live/monitor.example.com/privkey.pem;
+```
+
+证书签发和 Nginx reload 前都先运行 `sudo nginx -t`，确认不会影响现有官网。
 
 ```bash
 sudo cp deploy/nginx/codex-monitor-subdomain.conf /etc/nginx/sites-available/codex-monitor.conf

@@ -26,4 +26,17 @@ final class MonitorClientTests: XCTestCase {
         XCTAssertEqual(socket.originalRequest?.url?.absoluteString, "wss://monitor.example.com/api/live")
         XCTAssertEqual(socket.originalRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer mobile-secret")
     }
+
+    func testPreservesBasePathForReverseProxyDeployments() throws {
+        let client = MonitorClient(
+            baseURL: URL(string: "https://example.com/codex-monitor")!,
+            token: "mobile-secret"
+        )
+
+        let request = client.makeRequest(path: "/api/threads")
+        let socket = client.makeLiveSocket()
+
+        XCTAssertEqual(request.url?.absoluteString, "https://example.com/codex-monitor/api/threads")
+        XCTAssertEqual(socket.originalRequest?.url?.absoluteString, "wss://example.com/codex-monitor/api/live")
+    }
 }

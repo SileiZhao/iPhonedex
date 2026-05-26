@@ -15,6 +15,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codexmonitor.app
+        DEVELOPMENT_TEAM: 5QXL9WZDC8
+        CODE_SIGN_STYLE: Automatic
         INFOPLIST_KEY_CFBundleDisplayName: Codex Monitor
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -24,10 +26,15 @@ targets:
       properties:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Codex Monitor uses the local network to connect to the Mac smoke-test server during physical device development.
   CodexMonitorTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - CodexMonitorTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: CodexMonitor

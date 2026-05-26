@@ -11,8 +11,23 @@ final class MonitorClient {
         self.session = session
     }
 
+    func endpointURL(path: String, webSocket: Bool = false) -> URL {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var basePath = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !basePath.isEmpty {
+            basePath += "/"
+        }
+
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.path = "/" + basePath + trimmedPath
+        if webSocket {
+            components.scheme = baseURL.scheme == "https" ? "wss" : "ws"
+        }
+        return components.url!
+    }
+
     func makeRequest(path: String) -> URLRequest {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        var request = URLRequest(url: endpointURL(path: path))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         return request
@@ -28,10 +43,12 @@ final class MonitorClient {
     }
 
     func makeLiveSocket() -> URLSessionWebSocketTask {
-        var components = URLComponents(url: baseURL.appending(path: "/api/live"), resolvingAgainstBaseURL: false)!
-        components.scheme = baseURL.scheme == "https" ? "wss" : "ws"
-        var request = URLRequest(url: components.url!)
+        var request = URLRequest(url: endpointURL(path: "/api/live", webSocket: true))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return session.webSocketTask(with: request)
+    }
+
+    func testConnection() async throws {
+        _ = try await fetchThreads()
     }
 }

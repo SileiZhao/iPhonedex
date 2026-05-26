@@ -13,6 +13,7 @@
     "prebuild": "pnpm --filter @codex-monitor/protocol build",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
     "pretest": "pnpm --filter @codex-monitor/protocol build",
     "test": "vitest run",
     "lint": "tsc -p tsconfig.json --noEmit"
