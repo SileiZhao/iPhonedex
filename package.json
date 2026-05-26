@@ -1,0 +1,23 @@
+{
+  "name": "codex-iphone-monitor",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "dev:server": "pnpm --filter @codex-monitor/server dev",
+    "dev:relay": "pnpm --filter @codex-monitor/relay dev",
+    "ios:generate": "cd apps/ios && xcodegen generate",
+    "ios:test": "xcodebuild test -project apps/ios/CodexMonitor.xcodeproj -scheme CodexMonitor -destination 'platform=iOS Simulator,name=iPhone 16'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

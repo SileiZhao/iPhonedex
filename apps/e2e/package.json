@@ -1,0 +1,19 @@
+{
+  "name": "@codex-monitor/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "pnpm --filter @codex-monitor/server build",
+    "test": "vitest run",
+    "prelint": "pnpm --filter @codex-monitor/server build",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@codex-monitor/protocol": "workspace:*",
+    "@codex-monitor/server": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.4"
+  }
+}

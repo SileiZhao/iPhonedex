@@ -1,0 +1,24 @@
+services:
+  codex-monitor:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["node", "apps/server/dist/main.js"]
+    restart: unless-stopped
+    user: "10001:10001"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8787"
+      DATABASE_URL: /data/events.sqlite
+      RELAY_TOKEN: ${RELAY_TOKEN}
+      MOBILE_TOKEN: ${MOBILE_TOKEN}
+    ports:
+      - "127.0.0.1:18787:8787"
+    volumes:
+      - /opt/codex-monitor/app:/app:ro
+      - /var/lib/codex-monitor:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

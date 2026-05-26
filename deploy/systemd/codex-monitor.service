@@ -1,0 +1,21 @@
+[Unit]
+Description=Codex Monitor API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codex-monitor
+Group=codex-monitor
+WorkingDirectory=/opt/codex-monitor/app
+EnvironmentFile=/opt/codex-monitor/codex-monitor.env
+ExecStart=/usr/bin/node apps/server/dist/main.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ReadWritePaths=/var/lib/codex-monitor
+
+[Install]
+WantedBy=multi-user.target
