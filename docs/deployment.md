@@ -69,7 +69,11 @@ sudo ss -lntp | grep -E ':80|:443|:18787'
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-预期：`80` 和 `443` 仍由 Nginx 占用；`18787` 只绑定 `127.0.0.1`；公司官网容器或进程端口没有变化。
+预期：`80` 和 `443` 仍由 Nginx 占用；`18787` 只绑定 `127.0.0.1`；公司官网容器或进程端口没有变化。`/health` 会同时检查 API 进程和 SQLite 可读写连接，返回：
+
+```json
+{ "ok": true, "database": "ok" }
+```
 
 ## systemd 备选部署
 
@@ -139,6 +143,16 @@ iPhone App 的服务器地址填写：
 https://example.com/codex-monitor
 ```
 
+路径模板包含精确 `/codex-monitor` 到 `/codex-monitor/` 的 `308` 重定向，避免 iPhone 或浏览器少写尾部斜杠时命中官网 root。
+
+路径方式验证：
+
+```bash
+curl -I https://example.com/
+curl -I https://example.com/codex-monitor/health
+curl -H "Authorization: Bearer $MOBILE_TOKEN" https://example.com/codex-monitor/api/threads
+```
+
 ## Mac relay 配置
 
 Mac 上配置环境变量：
@@ -147,13 +161,29 @@ Mac 上配置环境变量：
 export MONITOR_SERVER_URL="https://monitor.example.com"
 export RELAY_TOKEN="server-generated-relay-token"
 export HOST_ID="$(hostname)"
+export RELAY_UPLOAD_ATTEMPTS=3
+export RELAY_UPLOAD_RETRY_DELAY_MS=1000
 ```
 
-Codex hooks 第一版接入方式：
+Codex hooks 接入方式：
 
-- 配置 Codex hooks，把 hook JSON 通过 stdin 传给 `pnpm --filter @codex-monitor/relay start`。
-- 如果 hooks 输出字段与实现假设字段不同，先调整 `apps/relay/src/codex-source.ts` 的 `RawHookEvent` 映射，并补测试。
-- 不在 hooks 中传完整 secret、完整 `.env`、完整终端历史。
+- 配置 Codex hooks，把每行 hook JSON 通过 stdin 传给 `pnpm --filter @codex-monitor/relay start` 或构建后的 `pnpm --filter @codex-monitor/relay start`。
+- relay 识别 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`Notification`、`Stop`，并优先使用 `session_id`、`turn_id`、`tool_call_id`、`tool_input.command`。
+- `PermissionRequest` 会生成 iPhone 端的“等待批准”状态和命令预览；`PreToolUse` / `PostToolUse` 会生成步骤 timeline；`Notification` 会进入最近日志。
+- `HOST_ID` 会写入每个事件，server 会按 `hostId + threadId` 分组，避免多台 Mac 的同名 session 合并。
+- 上传失败会按 `RELAY_UPLOAD_ATTEMPTS` 和 `RELAY_UPLOAD_RETRY_DELAY_MS` 重试。长期断网时仍可能丢失 hook 事件；如要做到严格不丢，需要再加本地落盘队列。
+- relay 和 server 都会对 `title`、`promptPreview`、`commandPreview`、`summary`、日志文本中的常见 API key 和 Bearer token 做脱敏。不要在 hooks 中传完整 `.env`、完整终端历史或无需监控的私密文件内容。
+- 如果官方 hooks 字段继续变化，先调整 `apps/relay/src/codex-source.ts` 的 `RawHookEvent` 映射，并补测试。
+
+token 轮换：
+
+```bash
+NEW_MOBILE_TOKEN="$(openssl rand -hex 32)"
+sudo sed -i.bak "s/^MOBILE_TOKEN=.*/MOBILE_TOKEN=$NEW_MOBILE_TOKEN/" /opt/codex-monitor/codex-monitor.env
+sudo systemctl restart codex-monitor
+```
+
+轮换后在 iPhone App 设置里更新 `Mobile Token`，点“测试连接”再“连接并监控”。
 
 ## iPhone App 配置
 

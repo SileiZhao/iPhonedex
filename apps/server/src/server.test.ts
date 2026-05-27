@@ -18,7 +18,7 @@ describe("server", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ok: true });
+    expect(response.json()).toEqual({ ok: true, database: "ok" });
     await app.close();
   });
 
@@ -72,6 +72,41 @@ describe("server", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject([
       { threadId: "thread-1", title: "Monitor", status: "idle" },
+    ]);
+
+    await app.close();
+  });
+
+  it("keeps same thread ids from different hosts in separate snapshots", async () => {
+    process.env.RELAY_TOKEN = "relay-secret";
+    process.env.MOBILE_TOKEN = "mobile-secret";
+    const app = await buildServer({ databaseUrl: ":memory:" });
+
+    for (const hostId of ["mac-mini", "macbook"]) {
+      await app.inject({
+        method: "POST",
+        url: "/relay/events",
+        headers: { authorization: "Bearer relay-secret" },
+        payload: {
+          type: "thread.started",
+          threadId: "thread-1",
+          title: `Monitor ${hostId}`,
+          at: "2026-05-26T10:00:00.000Z",
+          hostId,
+        },
+      });
+    }
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/threads",
+      headers: { authorization: "Bearer mobile-secret" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([
+      { threadId: "thread-1", hostId: "mac-mini" },
+      { threadId: "thread-1", hostId: "macbook" },
     ]);
 
     await app.close();

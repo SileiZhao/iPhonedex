@@ -27,5 +27,7 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Codex Monitor uses the local network to connect to the Mac smoke-test server during physical device development.</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
 </dict>
 </plist>

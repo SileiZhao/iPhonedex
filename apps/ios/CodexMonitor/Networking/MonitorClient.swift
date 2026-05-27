@@ -1,5 +1,21 @@
 import Foundation
 
+enum MonitorClientError: LocalizedError, Equatable {
+    case httpStatus(Int)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .httpStatus(let status) where status == 401 || status == 403:
+            return "Mobile Token 无效，请检查连接设置。"
+        case .httpStatus(let status):
+            return "服务器返回异常状态码：\(status)"
+        case .invalidResponse:
+            return "服务器响应格式异常。"
+        }
+    }
+}
+
 final class MonitorClient {
     private let baseURL: URL
     private let token: String
@@ -36,8 +52,11 @@ final class MonitorClient {
     func fetchThreads() async throws -> [ThreadSnapshot] {
         let request = makeRequest(path: "/api/threads")
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
+        guard let http = response as? HTTPURLResponse else {
+            throw MonitorClientError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw MonitorClientError.httpStatus(http.statusCode)
         }
         return try JSONDecoder().decode([ThreadSnapshot].self, from: data)
     }

@@ -67,6 +67,12 @@ export interface ThreadSnapshot {
   status: ThreadStatus;
   currentTurnId?: string;
   lastEventAt: string;
+  pendingApproval?: {
+    approvalId: string;
+    turnId: string;
+    commandPreview: string;
+    at: string;
+  };
   steps: Array<{
     stepId: string;
     label: string;
@@ -130,14 +136,27 @@ export function isCodexMonitorEvent(value: unknown): value is CodexMonitorEvent 
 }
 
 export function redactEvent(event: CodexMonitorEvent): CodexMonitorEvent {
-  if (event.type !== "log.appended") return event;
-  return {
-    ...event,
-    text: event.text
-      .replace(/(OPENAI_API_KEY=)[^\s]+/g, "$1[REDACTED]")
-      .replace(/(API_KEY=)[^\s]+/g, "$1[REDACTED]")
-      .replace(/(Authorization:\s*Bearer\s+)[^\s]+/gi, "$1[REDACTED]"),
-  };
+  switch (event.type) {
+    case "thread.started":
+      return { ...event, title: redactText(event.title) };
+    case "turn.started":
+      return { ...event, promptPreview: redactText(event.promptPreview) };
+    case "step.updated":
+      return { ...event, label: redactText(event.label) };
+    case "log.appended":
+      return { ...event, text: redactText(event.text) };
+    case "approval.requested":
+      return { ...event, commandPreview: redactText(event.commandPreview) };
+    case "turn.completed":
+      return { ...event, summary: redactText(event.summary) };
+  }
+}
+
+function redactText(text: string): string {
+  return text
+    .replace(/(OPENAI_API_KEY=)[^\s]+/g, "$1[REDACTED]")
+    .replace(/(API_KEY=)[^\s]+/g, "$1[REDACTED]")
+    .replace(/(Authorization:\s*Bearer\s+)[^\s'"]+/gi, "$1[REDACTED]");
 }
 
 export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
@@ -155,6 +174,7 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
   let status: ThreadStatus = "idle";
   let currentTurnId: string | undefined;
   let lastEventAt = first.at;
+  let pendingApproval: ThreadSnapshot["pendingApproval"];
 
   for (const event of events) {
     lastEventAt = event.at;
@@ -165,6 +185,7 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
     if (event.type === "turn.started") {
       currentTurnId = event.turnId;
       status = "running";
+      pendingApproval = undefined;
     }
     if (event.type === "step.updated") {
       steps.set(event.stepId, {
@@ -180,10 +201,17 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
     if (event.type === "approval.requested") {
       currentTurnId = event.turnId;
       status = "waiting_for_approval";
+      pendingApproval = {
+        approvalId: event.approvalId,
+        turnId: event.turnId,
+        commandPreview: event.commandPreview,
+        at: event.at,
+      };
     }
     if (event.type === "turn.completed") {
       currentTurnId = event.turnId;
       status = event.outcome === "success" ? "completed" : "failed";
+      pendingApproval = undefined;
     }
   }
 
@@ -194,6 +222,7 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
     status,
     currentTurnId,
     lastEventAt,
+    pendingApproval,
     steps: Array.from(steps.values()),
     recentLogs: logs.slice(-100),
   };

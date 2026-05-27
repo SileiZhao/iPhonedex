@@ -12,6 +12,8 @@ enum ConfigurationStoreError: Error {
 }
 
 final class ConfigurationStore {
+    static let defaultServerURL = "https://monitor.example.com"
+
     private let service = "CodexMonitor"
     private let tokenAccount = "mobile-token"
     private let defaults: UserDefaults
@@ -21,13 +23,26 @@ final class ConfigurationStore {
     }
 
     func load() throws -> MonitorConfiguration {
-        let serverURL = defaults.string(forKey: "monitor.serverURL") ?? "https://monitor.example.com"
+        let serverURL = defaults.string(forKey: "monitor.serverURL") ?? Self.defaultServerURL
         return MonitorConfiguration(serverURL: serverURL, mobileToken: try loadToken())
     }
 
     func save(_ configuration: MonitorConfiguration) throws {
         defaults.set(configuration.serverURL, forKey: "monitor.serverURL")
         try saveToken(configuration.mobileToken)
+    }
+
+    func clear() throws {
+        defaults.removeObject(forKey: "monitor.serverURL")
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: tokenAccount
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            throw ConfigurationStoreError.keychainStatus(status)
+        }
     }
 
     private func loadToken() throws -> String {

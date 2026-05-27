@@ -21,6 +21,7 @@ export class EventStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
+      CREATE INDEX IF NOT EXISTS idx_events_host_thread ON events(host_id, thread_id);
       CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
     `);
   }
@@ -42,10 +43,15 @@ export class EventStore {
     for (const row of rows) {
       const parsed = JSON.parse(row.event_json) as unknown;
       if (!isCodexMonitorEvent(parsed)) continue;
-      grouped.set(parsed.threadId, [...(grouped.get(parsed.threadId) ?? []), parsed]);
+      const key = `${parsed.hostId}\u0000${parsed.threadId}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), parsed]);
     }
 
     return Array.from(grouped.values()).map(reduceSnapshot);
+  }
+
+  healthCheck(): void {
+    this.db.prepare("SELECT 1").get();
   }
 
   close(): void {

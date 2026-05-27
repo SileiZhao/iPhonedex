@@ -43,7 +43,10 @@ export async function buildServer(options: BuildOptions) {
     store.close();
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async () => {
+    store.healthCheck();
+    return { ok: true, database: "ok" };
+  });
 
   app.post("/relay/events", async (request, reply) => {
     requireBearer(request, getRequiredEnv("RELAY_TOKEN"));
@@ -55,7 +58,13 @@ export async function buildServer(options: BuildOptions) {
     const event: CodexMonitorEvent = redactEvent(body);
     store.insert(event);
     const payload = JSON.stringify({ type: "event", event });
-    for (const client of mobileClients) client.send(payload);
+    for (const client of mobileClients) {
+      try {
+        client.send(payload);
+      } catch {
+        mobileClients.delete(client);
+      }
+    }
     return reply.code(202).send({ ok: true });
   });
 
