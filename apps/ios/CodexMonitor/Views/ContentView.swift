@@ -70,6 +70,7 @@ final class MonitorViewModel: ObservableObject {
 
     func saveConfiguration() {
         do {
+            baseURLText = ConfigurationStore.normalizedServerURL(baseURLText)
             try store.save(MonitorConfiguration(serverURL: baseURLText, mobileToken: token))
             errorMessage = nil
             noticeMessage = "配置已保存"
@@ -252,6 +253,9 @@ final class MonitorViewModel: ObservableObject {
     private func validationMessage() -> String {
         let trimmedURL = baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
         let scheme = URL(string: trimmedURL)?.scheme?.lowercased()
+        if ConfigurationStore.isPublicHTTPURL(trimmedURL) {
+            return "公网服务器必须使用 HTTPS 域名，例如 https://www.topomotion.com/codex-monitor"
+        }
         if scheme != "http" && scheme != "https" {
             return "服务器地址必须以 http:// 或 https:// 开头"
         }

@@ -12,7 +12,7 @@ enum ConfigurationStoreError: Error {
 }
 
 final class ConfigurationStore {
-    static let defaultServerURL = "https://monitor.example.com"
+    static let defaultServerURL = "https://www.topomotion.com/codex-monitor"
 
     private let service = "CodexMonitor"
     private let tokenAccount = "mobile-token"
@@ -28,8 +28,35 @@ final class ConfigurationStore {
     }
 
     func save(_ configuration: MonitorConfiguration) throws {
-        defaults.set(configuration.serverURL, forKey: "monitor.serverURL")
+        defaults.set(Self.normalizedServerURL(configuration.serverURL), forKey: "monitor.serverURL")
         try saveToken(configuration.mobileToken)
+    }
+
+    static func normalizedServerURL(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            var components = URLComponents(string: trimmed),
+            components.scheme?.lowercased() == "http",
+            let host = components.host,
+            !isLocalHost(host)
+        else {
+            return trimmed
+        }
+
+        components.scheme = "https"
+        return components.string ?? trimmed
+    }
+
+    static func isPublicHTTPURL(_ rawValue: String) -> Bool {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let components = URLComponents(string: trimmed),
+            components.scheme?.lowercased() == "http",
+            let host = components.host
+        else {
+            return false
+        }
+        return !isLocalHost(host)
     }
 
     func clear() throws {
@@ -66,6 +93,23 @@ final class ConfigurationStore {
             throw ConfigurationStoreError.invalidData
         }
         return token
+    }
+
+    private static func isLocalHost(_ host: String) -> Bool {
+        let lowercased = host.lowercased()
+        if lowercased == "localhost" || lowercased.hasSuffix(".local") {
+            return true
+        }
+        if lowercased.hasPrefix("10.") || lowercased.hasPrefix("192.168.") {
+            return true
+        }
+        if lowercased.hasPrefix("172.") {
+            let parts = lowercased.split(separator: ".")
+            if parts.count > 1, let second = Int(parts[1]), (16...31).contains(second) {
+                return true
+            }
+        }
+        return false
     }
 
     private func saveToken(_ token: String) throws {
