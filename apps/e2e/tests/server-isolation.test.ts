@@ -143,4 +143,14 @@ describe("monitor e2e", () => {
     expect(project).toContain("NSAllowsLocalNetworking: true");
     expect(project).toContain("NSLocalNetworkUsageDescription:");
   });
+
+  it("provides a persistent macOS smoke server workflow", async () => {
+    const script = await readFile(resolve(root, "scripts/local-smoke.sh"), "utf8");
+
+    expect(script).toContain("usage()");
+    expect(script).toContain("start_smoke_server()");
+    expect(script).toContain("status_smoke_server()");
+    expect(script).toContain("stop_smoke_server()");
+    expect(script).toContain("launchctl bootstrap");
+  });
 });

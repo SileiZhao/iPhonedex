@@ -27,13 +27,20 @@ pnpm --filter @codex-monitor/relay build
 本地 smoke 脚本会在 Mac 上用内存数据库启动 server，并写入一条 `thread.started` 和一条 `approval.requested` 测试事件，方便 iPhone 真机页面直接看到任务状态。
 
 ```bash
-scripts/local-smoke.sh
+scripts/local-smoke.sh start
+scripts/local-smoke.sh status
 ```
 
-脚本启动参数固定为本地联调用途：`HOST=0.0.0.0 PORT=8787 DATABASE_URL=:memory: RELAY_TOKEN=relay-secret MOBILE_TOKEN=mobile-secret`。启动后在 iPhone App 首屏填写：
+`start` 会创建 macOS LaunchAgent，让 smoke server 在后台持续运行；`status` 会打印当前 iPhone 可用的 Server URL、Mobile Token 和测试任务快照。脚本启动参数固定为本地联调用途：`HOST=0.0.0.0 PORT=8787 DATABASE_URL=:memory: RELAY_TOKEN=relay-secret MOBILE_TOKEN=mobile-secret`。启动后在 iPhone App 首屏填写：
 
 - Server URL: `http://<Mac局域网IP>:8787`
 - Mobile Token: `mobile-secret`
+
+联调结束后停止后台服务：
+
+```bash
+scripts/local-smoke.sh stop
+```
 
 该配置只用于 Mac 与 iPhone 在同一局域网内的本地联调，不要用于公网或生产部署。
 
