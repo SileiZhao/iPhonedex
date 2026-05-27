@@ -51,9 +51,12 @@ scripts/local-smoke.sh stop
 ```bash
 RELAY_TOKEN="$(openssl rand -hex 32)"
 MOBILE_TOKEN="$(openssl rand -hex 32)"
-sudo mkdir -p /opt/codex-monitor/app /var/lib/codex-monitor
+sudo mkdir -p /opt/codex-monitor/app /opt/codex-monitor/secrets /var/lib/codex-monitor
 sudo chown -R 10001:10001 /var/lib/codex-monitor
-printf 'RELAY_TOKEN=%s\nMOBILE_TOKEN=%s\n' "$RELAY_TOKEN" "$MOBILE_TOKEN" | sudo tee /opt/codex-monitor/.env
+sudo cp AuthKey_7A6JSJF8VP.p8 /opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
+sudo chmod 0400 /opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
+sudo chown -R 10001:10001 /opt/codex-monitor/secrets
+printf 'RELAY_TOKEN=%s\nMOBILE_TOKEN=%s\nAPNS_KEY_ID=7A6JSJF8VP\nAPNS_TEAM_ID=5QXL9WZDC8\nAPNS_TOPIC=com.codexmonitor.app\n' "$RELAY_TOKEN" "$MOBILE_TOKEN" | sudo tee /opt/codex-monitor/.env
 ```
 
 启动：
@@ -95,7 +98,20 @@ PORT=18787
 DATABASE_URL=/var/lib/codex-monitor/events.sqlite
 RELAY_TOKEN=$(openssl rand -hex 32)
 MOBILE_TOKEN=$(openssl rand -hex 32)
+APNS_KEY_PATH=/opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
+APNS_KEY_ID=7A6JSJF8VP
+APNS_TEAM_ID=5QXL9WZDC8
+APNS_TOPIC=com.codexmonitor.app
 EOF
+```
+
+安装 APNs 私钥：
+
+```bash
+sudo mkdir -p /opt/codex-monitor/secrets
+sudo cp AuthKey_7A6JSJF8VP.p8 /opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
+sudo chown -R codex-monitor:codex-monitor /opt/codex-monitor/secrets
+sudo chmod 0400 /opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
 ```
 
 安装服务：
@@ -184,6 +200,29 @@ sudo systemctl restart codex-monitor
 ```
 
 轮换后在 iPhone App 设置里更新 `Mobile Token`，点“测试连接”再“连接并监控”。
+
+## APNs 后台推送
+
+后台推送使用 Apple token-based provider authentication。server 启动时读取以下环境变量；缺少任意一项时会退回 no-op provider，不影响状态同步：
+
+```bash
+APNS_KEY_PATH=/opt/codex-monitor/secrets/AuthKey_7A6JSJF8VP.p8
+APNS_KEY_ID=7A6JSJF8VP
+APNS_TEAM_ID=5QXL9WZDC8
+APNS_TOPIC=com.codexmonitor.app
+```
+
+`.p8` 私钥只放在服务器 `/opt/codex-monitor/secrets/`，权限建议 `0400`，不要放入仓库、Docker 镜像或日志。Debug 真机安装拿到的是 sandbox device token；TestFlight/App Store 拿到的是 production device token。iPhone App 会在“连接并监控”成功后请求通知权限、注册 APNs，并把 device token 上传到：
+
+```http
+POST /api/devices/register
+Authorization: Bearer <MOBILE_TOKEN>
+Content-Type: application/json
+
+{ "token": "<apns-device-token>", "environment": "sandbox" }
+```
+
+server 会把 token 持久化到 SQLite 的 `device_tokens` 表。收到 `approval.requested`、`step.updated failed` 或 `turn.completed failed` 时，server 会向已注册设备发送 APNs alert；APNs 发送失败不会阻断 `/relay/events` 入库和 WebSocket 广播。
 
 ## iPhone App 配置
 

@@ -39,4 +39,22 @@ final class MonitorClientTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "https://example.com/codex-monitor/api/threads")
         XCTAssertEqual(socket.originalRequest?.url?.absoluteString, "wss://example.com/codex-monitor/api/live")
     }
+
+    func testBuildsDeviceRegistrationRequest() throws {
+        let client = MonitorClient(
+            baseURL: URL(string: "https://monitor.example.com")!,
+            token: "mobile-secret"
+        )
+
+        let request = try client.makeDeviceRegistrationRequest(
+            deviceToken: "abc123",
+            environment: .sandbox
+        )
+
+        XCTAssertEqual(request.url?.absoluteString, "https://monitor.example.com/api/devices/register")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mobile-secret")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(String(data: request.httpBody ?? Data(), encoding: .utf8), #"{"token":"abc123","environment":"sandbox"}"#)
+    }
 }

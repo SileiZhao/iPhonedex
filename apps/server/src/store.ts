@@ -5,6 +5,15 @@ import {
   type CodexMonitorEvent,
   type ThreadSnapshot,
 } from "@codex-monitor/protocol";
+import type { PushEnvironment } from "./apns.js";
+
+export interface DeviceTokenRecord {
+  token: string;
+  environment: PushEnvironment;
+  platform: "ios";
+  createdAt: string;
+  updatedAt: string;
+}
 
 export class EventStore {
   private db: Database.Database;
@@ -23,6 +32,16 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
       CREATE INDEX IF NOT EXISTS idx_events_host_thread ON events(host_id, thread_id);
       CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+
+      CREATE TABLE IF NOT EXISTS device_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token TEXT NOT NULL UNIQUE,
+        platform TEXT NOT NULL DEFAULT 'ios',
+        environment TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_environment ON device_tokens(environment);
     `);
   }
 
@@ -48,6 +67,53 @@ export class EventStore {
     }
 
     return Array.from(grouped.values()).map(reduceSnapshot);
+  }
+
+  registerDeviceToken(token: string, environment: PushEnvironment): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `
+        INSERT INTO device_tokens (token, platform, environment, created_at, updated_at)
+        VALUES (?, 'ios', ?, ?, ?)
+        ON CONFLICT(token) DO UPDATE SET
+          environment = excluded.environment,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(token, environment, now, now);
+  }
+
+  listDeviceTokens(): DeviceTokenRecord[] {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT token, platform, environment, created_at, updated_at
+        FROM device_tokens
+        ORDER BY updated_at DESC, id DESC
+      `,
+      )
+      .all() as Array<{
+      token: string;
+      platform: string;
+      environment: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+    return rows
+      .filter(
+        (row) =>
+          row.platform === "ios" &&
+          (row.environment === "sandbox" || row.environment === "production"),
+      )
+      .map((row) => ({
+        token: row.token,
+        platform: "ios",
+        environment: row.environment as PushEnvironment,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
   }
 
   healthCheck(): void {

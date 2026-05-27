@@ -17,6 +17,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.codexmonitor.app
         DEVELOPMENT_TEAM: 5QXL9WZDC8
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: CodexMonitor/CodexMonitor.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: Codex Monitor
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -25,6 +26,8 @@ targets:
       path: CodexMonitor/Info.plist
       properties:
         UILaunchStoryboardName: LaunchScreen
+        UIBackgroundModes:
+          - remote-notification
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
           NSAllowsLocalNetworking: true

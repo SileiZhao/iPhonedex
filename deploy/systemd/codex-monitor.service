@@ -9,13 +9,14 @@ User=codex-monitor
 Group=codex-monitor
 WorkingDirectory=/opt/codex-monitor/app
 EnvironmentFile=/opt/codex-monitor/codex-monitor.env
-ExecStart=/usr/bin/node apps/server/dist/main.js
+ExecStart=/opt/codex-monitor/node/bin/node apps/server/dist/main.js
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ReadWritePaths=/var/lib/codex-monitor
+ReadOnlyPaths=/opt/codex-monitor/secrets
 
 [Install]
 WantedBy=multi-user.target

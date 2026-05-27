@@ -20,6 +20,8 @@ final class MonitorViewModel: ObservableObject {
     private let notifier = MonitorNotificationService()
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
+    private var notificationObservers: [NSObjectProtocol] = []
+    private var remoteDeviceToken: String?
     private var notifiedSnapshotKeys = Set<String>()
 
     var summary: DashboardSummary {
@@ -57,6 +59,13 @@ final class MonitorViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+        observeRemoteNotificationRegistration()
+    }
+
+    deinit {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     func saveConfiguration() {
@@ -73,6 +82,7 @@ final class MonitorViewModel: ObservableObject {
         saveConfiguration()
         let refreshed = await refresh()
         if refreshed {
+            await requestRemotePushRegistration()
             connectLive()
         }
     }
@@ -101,6 +111,7 @@ final class MonitorViewModel: ObservableObject {
             lastUpdatedText = "尚未同步"
             errorMessage = nil
             noticeMessage = "本地配置已清除"
+            remoteDeviceToken = nil
         } catch {
             errorMessage = Self.userFacingMessage(for: error)
         }
@@ -180,6 +191,62 @@ final class MonitorViewModel: ObservableObject {
             return nil
         }
         return MonitorClient(baseURL: url, token: trimmedToken)
+    }
+
+    private func observeRemoteNotificationRegistration() {
+        let tokenObserver = NotificationCenter.default.addObserver(
+            forName: .codexMonitorDeviceTokenReceived,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let token = notification.object as? String else { return }
+            Task { @MainActor in
+                await self?.registerRemoteDeviceToken(token)
+            }
+        }
+
+        let failureObserver = NotificationCenter.default.addObserver(
+            forName: .codexMonitorDeviceTokenRegistrationFailed,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let detail = notification.object as? String
+            Task { @MainActor in
+                self?.noticeMessage = detail.map {
+                    "后台推送注册失败：\($0)"
+                } ?? "后台推送注册失败"
+            }
+        }
+
+        notificationObservers = [tokenObserver, failureObserver]
+    }
+
+    private func requestRemotePushRegistration() async {
+        let granted = await notifier.requestRemoteNotificationRegistration()
+        if !granted {
+            noticeMessage = "通知权限未开启，只能在 App 前台显示提醒。"
+            return
+        }
+
+        if let remoteDeviceToken {
+            await registerRemoteDeviceToken(remoteDeviceToken)
+        }
+    }
+
+    private func registerRemoteDeviceToken(_ deviceToken: String) async {
+        remoteDeviceToken = deviceToken
+        guard let client = makeClient() else { return }
+        do {
+            try await client.registerDeviceToken(
+                deviceToken,
+                environment: DevicePushEnvironment.current
+            )
+            if noticeMessage?.hasPrefix("后台推送") == true {
+                noticeMessage = "后台推送已启用"
+            }
+        } catch {
+            noticeMessage = "后台推送 token 上传失败：\(Self.userFacingMessage(for: error))"
+        }
     }
 
     private func validationMessage() -> String {

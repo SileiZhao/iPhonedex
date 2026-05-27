@@ -16,6 +16,19 @@ enum MonitorClientError: LocalizedError, Equatable {
     }
 }
 
+enum DevicePushEnvironment: String, Codable {
+    case sandbox
+    case production
+
+    static var current: DevicePushEnvironment {
+        #if DEBUG
+        return .sandbox
+        #else
+        return .production
+        #endif
+    }
+}
+
 final class MonitorClient {
     private let baseURL: URL
     private let token: String
@@ -49,6 +62,19 @@ final class MonitorClient {
         return request
     }
 
+    func makeDeviceRegistrationRequest(
+        deviceToken: String,
+        environment: DevicePushEnvironment
+    ) throws -> URLRequest {
+        var request = makeRequest(path: "/api/devices/register")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            DeviceRegistrationPayload(token: deviceToken, environment: environment.rawValue)
+        )
+        return request
+    }
+
     func fetchThreads() async throws -> [ThreadSnapshot] {
         let request = makeRequest(path: "/api/threads")
         let (data, response) = try await session.data(for: request)
@@ -67,7 +93,26 @@ final class MonitorClient {
         return session.webSocketTask(with: request)
     }
 
+    func registerDeviceToken(_ deviceToken: String, environment: DevicePushEnvironment) async throws {
+        let request = try makeDeviceRegistrationRequest(
+            deviceToken: deviceToken,
+            environment: environment
+        )
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MonitorClientError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw MonitorClientError.httpStatus(http.statusCode)
+        }
+    }
+
     func testConnection() async throws {
         _ = try await fetchThreads()
     }
+}
+
+private struct DeviceRegistrationPayload: Encodable {
+    let token: String
+    let environment: String
 }

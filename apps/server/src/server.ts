@@ -5,11 +5,18 @@ import {
   redactEvent,
   type CodexMonitorEvent,
 } from "@codex-monitor/protocol";
+import {
+  NoopPushProvider,
+  type PushEnvironment,
+  type PushNotification,
+  type PushProvider,
+} from "./apns.js";
 import { getRequiredEnv, requireBearer } from "./auth.js";
 import { EventStore } from "./store.js";
 
 interface BuildOptions {
   databaseUrl: string;
+  pushProvider?: PushProvider;
 }
 
 interface MobileClient {
@@ -30,6 +37,7 @@ function getErrorResponse(error: unknown): { statusCode: number; message: string
 export async function buildServer(options: BuildOptions) {
   const app = fastify({ logger: false });
   const store = new EventStore(options.databaseUrl);
+  const pushProvider = options.pushProvider ?? new NoopPushProvider();
   const mobileClients = new Set<MobileClient>();
 
   await app.register(websocket);
@@ -65,6 +73,18 @@ export async function buildServer(options: BuildOptions) {
         mobileClients.delete(client);
       }
     }
+    await notifyDevices(store, pushProvider, event);
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.post("/api/devices/register", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("MOBILE_TOKEN"));
+    const body = request.body;
+    if (!isDeviceRegistration(body)) {
+      return reply.code(400).send({ error: "Invalid device registration" });
+    }
+
+    store.registerDeviceToken(body.token, body.environment);
     return reply.code(202).send({ ok: true });
   });
 
@@ -89,4 +109,69 @@ export async function buildServer(options: BuildOptions) {
   });
 
   return app;
+}
+
+function isDeviceRegistration(value: unknown): value is {
+  token: string;
+  environment: PushEnvironment;
+} {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.token === "string" &&
+    candidate.token.trim().length > 0 &&
+    candidate.token.length <= 512 &&
+    (candidate.environment === "sandbox" || candidate.environment === "production")
+  );
+}
+
+async function notifyDevices(
+  store: EventStore,
+  pushProvider: PushProvider,
+  event: CodexMonitorEvent,
+): Promise<void> {
+  const notification = notificationForEvent(event);
+  if (!notification) return;
+
+  const devices = store.listDeviceTokens();
+  await Promise.all(
+    devices.map(async (device) => {
+      try {
+        await pushProvider.send(device.token, device.environment, notification);
+      } catch {
+        // Push delivery must not block relay ingestion or WebSocket fanout.
+      }
+    }),
+  );
+}
+
+function notificationForEvent(event: CodexMonitorEvent): PushNotification | undefined {
+  if (event.type === "approval.requested") {
+    return {
+      title: "Codex 等待批准",
+      body: event.commandPreview,
+      threadId: event.threadId,
+      category: "approval",
+    };
+  }
+
+  if (event.type === "step.updated" && event.status === "failed") {
+    return {
+      title: "Codex 任务失败",
+      body: event.label,
+      threadId: event.threadId,
+      category: "failure",
+    };
+  }
+
+  if (event.type === "turn.completed" && event.outcome === "failed") {
+    return {
+      title: "Codex 任务失败",
+      body: event.summary,
+      threadId: event.threadId,
+      category: "failure",
+    };
+  }
+
+  return undefined;
 }

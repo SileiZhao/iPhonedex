@@ -12,11 +12,16 @@ services:
       DATABASE_URL: /data/events.sqlite
       RELAY_TOKEN: ${RELAY_TOKEN}
       MOBILE_TOKEN: ${MOBILE_TOKEN}
+      APNS_KEY_PATH: /secrets/AuthKey_7A6JSJF8VP.p8
+      APNS_KEY_ID: ${APNS_KEY_ID}
+      APNS_TEAM_ID: ${APNS_TEAM_ID}
+      APNS_TOPIC: ${APNS_TOPIC}
     ports:
       - "127.0.0.1:18787:8787"
     volumes:
       - /opt/codex-monitor/app:/app:ro
       - /var/lib/codex-monitor:/data
+      - /opt/codex-monitor/secrets:/secrets:ro
     logging:
       driver: json-file
       options:

@@ -1,7 +1,19 @@
 import Foundation
+import UIKit
 import UserNotifications
 
 final class MonitorNotificationService {
+    @MainActor
+    func requestRemoteNotificationRegistration() async -> Bool {
+        guard await requestAuthorizationIfNeeded() else { return false }
+        UIApplication.shared.registerForRemoteNotifications()
+        return true
+    }
+
+    static func hexString(from deviceToken: Data) -> String {
+        deviceToken.map { String(format: "%02x", $0) }.joined()
+    }
+
     func notifyAttention(snapshot: ThreadSnapshot) async {
         guard await requestAuthorizationIfNeeded() else { return }
 
