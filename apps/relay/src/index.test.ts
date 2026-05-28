@@ -24,6 +24,29 @@ describe("relay", () => {
     });
   });
 
+  it("parses current Codex lowerCamel hook event names", () => {
+    const event = parseHookLine(
+      JSON.stringify({
+        hook_event_name: "permissionRequest",
+        session_id: "thread-1",
+        turn_id: "turn-1",
+        tool_call_id: "call-1",
+        tool_name: "shell",
+        tool_input: { command: "pnpm build" },
+        timestamp: "2026-05-26T10:01:00.000Z",
+      }),
+      "mac-mini",
+    );
+
+    expect(event).toMatchObject({
+      type: "approval.requested",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      approvalId: "call-1",
+      commandPreview: "pnpm build",
+    });
+  });
+
   it("parses official permission requests into approval events", () => {
     const event = parseHookLine(
       JSON.stringify({

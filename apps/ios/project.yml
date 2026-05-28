@@ -15,9 +15,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codexmonitor.app
+        TARGETED_DEVICE_FAMILY: 1
         DEVELOPMENT_TEAM: 5QXL9WZDC8
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: CodexMonitor/CodexMonitor.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Codex Monitor
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES

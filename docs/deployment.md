@@ -191,6 +191,33 @@ Codex hooks 接入方式：
 - relay 和 server 都会对 `title`、`promptPreview`、`commandPreview`、`summary`、日志文本中的常见 API key 和 Bearer token 做脱敏。不要在 hooks 中传完整 `.env`、完整终端历史或无需监控的私密文件内容。
 - 如果官方 hooks 字段继续变化，先调整 `apps/relay/src/codex-source.ts` 的 `RawHookEvent` 映射，并补测试。
 
+### Codex Desktop bridge
+
+如果 Codex Desktop 暂时没有稳定暴露 hooks，使用 Desktop bridge 作为本机真实状态接入。它读取 `~/.codex/state_5.sqlite` 与 `~/.codex/logs_2.sqlite`，只上传线程标题、工作目录、工具调用摘要和 turn 完成状态，不上传完整 prompt、完整模型响应或原始 SSE 日志。
+
+安装：
+
+```bash
+MONITOR_SERVER_URL="https://example.com/codex-monitor" \
+RELAY_TOKEN="server-generated-relay-token" \
+scripts/install-codex-monitor-desktop-bridge.sh install
+```
+
+查看状态和日志：
+
+```bash
+scripts/install-codex-monitor-desktop-bridge.sh status
+tail -f ~/Library/Logs/codex-monitor-desktop-bridge.err.log
+```
+
+停止：
+
+```bash
+scripts/install-codex-monitor-desktop-bridge.sh stop
+```
+
+Desktop bridge 会安装为独立 LaunchAgent `com.codexmonitor.desktop-bridge`，不会替换 `~/.codex/config.toml` 里已有的 `notify` 配置，因此不会影响 Codex Computer Use。
+
 token 轮换：
 
 ```bash

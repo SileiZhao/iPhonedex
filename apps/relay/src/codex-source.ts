@@ -2,6 +2,9 @@ import type { CodexMonitorEvent } from "@codex-monitor/protocol";
 
 interface RawHookEvent {
   hook_event_name?: string;
+  eventName?: string;
+  event_name?: string;
+  name?: string;
   session_id?: string;
   turn_id?: string;
   tool_call_id?: string;
@@ -18,11 +21,12 @@ interface RawHookEvent {
 
 export function parseHookLine(line: string, hostId: string): CodexMonitorEvent | null {
   const raw = JSON.parse(line) as RawHookEvent;
+  const hookEventName = normalizeHookEventName(raw);
   const at = raw.timestamp ?? new Date().toISOString();
   const threadId = raw.session_id ?? "unknown-thread";
   const turnId = raw.turn_id ?? `${threadId}-${at}`;
 
-  if (raw.hook_event_name === "SessionStart") {
+  if (hookEventName === "sessionstart") {
     return {
       type: "thread.started",
       threadId,
@@ -32,7 +36,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "UserPromptSubmit") {
+  if (hookEventName === "userpromptsubmit") {
     return {
       type: "turn.started",
       threadId,
@@ -43,7 +47,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "TurnStart") {
+  if (hookEventName === "turnstart") {
     return {
       type: "turn.started",
       threadId,
@@ -54,7 +58,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "Notification") {
+  if (hookEventName === "notification") {
     return {
       type: "log.appended",
       threadId,
@@ -66,7 +70,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "PreToolUse") {
+  if (hookEventName === "pretooluse") {
     return {
       type: "step.updated",
       threadId,
@@ -79,7 +83,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "PermissionRequest" || raw.hook_event_name === "ApprovalRequest") {
+  if (hookEventName === "permissionrequest" || hookEventName === "approvalrequest") {
     return {
       type: "approval.requested",
       threadId,
@@ -91,7 +95,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "PostToolUse") {
+  if (hookEventName === "posttooluse") {
     return {
       type: "step.updated",
       threadId,
@@ -104,7 +108,7 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
     };
   }
 
-  if (raw.hook_event_name === "Stop") {
+  if (hookEventName === "stop") {
     return {
       type: "turn.completed",
       threadId,
@@ -117,6 +121,12 @@ export function parseHookLine(line: string, hostId: string): CodexMonitorEvent |
   }
 
   return null;
+}
+
+function normalizeHookEventName(raw: RawHookEvent): string {
+  return String(raw.hook_event_name ?? raw.eventName ?? raw.event_name ?? raw.name ?? "")
+    .replace(/[_\-\s]/g, "")
+    .toLowerCase();
 }
 
 function commandPreview(raw: RawHookEvent): string {

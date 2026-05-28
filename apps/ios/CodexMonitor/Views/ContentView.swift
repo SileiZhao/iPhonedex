@@ -139,6 +139,10 @@ final class MonitorViewModel: ObservableObject {
             notifyAttentionIfNeeded(from: fetchedSnapshots)
             return true
         } catch {
+            if Self.isCancellation(error) {
+                connecting = false
+                return connected
+            }
             connected = false
             connecting = false
             errorMessage = Self.userFacingMessage(for: error)
@@ -166,6 +170,9 @@ final class MonitorViewModel: ObservableObject {
                 _ = try await socket.receive()
                 _ = await refresh()
             } catch {
+                if Self.isCancellation(error) {
+                    return
+                }
                 connected = false
                 errorMessage = "WebSocket 已断开，正在尝试重新连接。"
                 noticeMessage = nil
@@ -286,6 +293,17 @@ final class MonitorViewModel: ObservableObject {
         }
 
         return error.localizedDescription
+    }
+
+    nonisolated static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func notifyAttentionIfNeeded(from snapshots: [ThreadSnapshot]) {

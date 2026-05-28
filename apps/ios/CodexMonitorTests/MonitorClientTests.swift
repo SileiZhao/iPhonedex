@@ -55,6 +55,10 @@ final class MonitorClientTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mobile-secret")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-        XCTAssertEqual(String(data: request.httpBody ?? Data(), encoding: .utf8), #"{"token":"abc123","environment":"sandbox"}"#)
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String]
+        )
+        XCTAssertEqual(payload["token"], "abc123")
+        XCTAssertEqual(payload["environment"], "sandbox")
     }
 }

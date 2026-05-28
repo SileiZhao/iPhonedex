@@ -1,5 +1,6 @@
 import readline from "node:readline";
 import { stdin } from "node:process";
+import { fileURLToPath } from "node:url";
 import { parseHookLine } from "./codex-source.js";
 import { redactBeforeUpload } from "./redact.js";
 
@@ -58,7 +59,7 @@ export async function run(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   run().catch((error: unknown) => {
     console.error(error);
     process.exit(1);
