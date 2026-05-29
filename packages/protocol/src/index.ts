@@ -11,6 +11,8 @@ export type CodexMonitorEvent =
       type: "thread.started";
       threadId: string;
       title: string;
+      cwd?: string;
+      threadSource?: string;
       at: string;
       hostId: string;
     }
@@ -36,7 +38,7 @@ export type CodexMonitorEvent =
       type: "log.appended";
       threadId: string;
       turnId: string;
-      stream: "assistant" | "tool" | "terminal" | "system";
+      stream: "user" | "assistant" | "reasoning" | "tool" | "terminal" | "system";
       text: string;
       at: string;
       hostId: string;
@@ -63,6 +65,8 @@ export type CodexMonitorEvent =
 export interface ThreadSnapshot {
   threadId: string;
   title: string;
+  cwd?: string;
+  threadSource?: string;
   hostId: string;
   status: ThreadStatus;
   currentTurnId?: string;
@@ -79,14 +83,14 @@ export interface ThreadSnapshot {
     status: StepStatus;
   }>;
   recentLogs: Array<{
-    stream: "assistant" | "tool" | "terminal" | "system";
+    stream: "user" | "assistant" | "reasoning" | "tool" | "terminal" | "system";
     text: string;
     at: string;
   }>;
 }
 
 const stepStatuses = ["queued", "running", "completed", "failed"];
-const streams = ["assistant", "tool", "terminal", "system"];
+const streams = ["user", "assistant", "reasoning", "tool", "terminal", "system"];
 const outcomes = ["success", "failed", "cancelled"];
 
 export function isCodexMonitorEvent(value: unknown): value is CodexMonitorEvent {
@@ -99,7 +103,11 @@ export function isCodexMonitorEvent(value: unknown): value is CodexMonitorEvent 
 
   switch (candidate.type) {
     case "thread.started":
-      return typeof candidate.title === "string";
+      return (
+        typeof candidate.title === "string" &&
+        (candidate.cwd === undefined || typeof candidate.cwd === "string") &&
+        (candidate.threadSource === undefined || typeof candidate.threadSource === "string")
+      );
     case "turn.started":
       return (
         typeof candidate.turnId === "string" &&
@@ -167,22 +175,34 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
   const first = events[0];
   const steps = new Map<
     string,
-    { stepId: string; label: string; status: StepStatus }
+    { stepId: string; label: string; status: StepStatus; turnId?: string }
   >();
   const logs: ThreadSnapshot["recentLogs"] = [];
   let title = first.type === "thread.started" ? first.title : first.threadId;
+  let cwd = first.type === "thread.started" ? first.cwd : undefined;
+  let threadSource = first.type === "thread.started" ? first.threadSource : undefined;
   let status: ThreadStatus = "idle";
   let currentTurnId: string | undefined;
   let lastEventAt = first.at;
   let pendingApproval: ThreadSnapshot["pendingApproval"];
+  const terminalTurnIds = new Set<string>();
 
   for (const event of events) {
     lastEventAt = event.at;
     if (event.type === "thread.started") {
       title = event.title;
-      status = "idle";
+      cwd = event.cwd;
+      threadSource = event.threadSource;
+      if (currentTurnId && isSyntheticDesktopTurnId(first.threadId, currentTurnId)) {
+        currentTurnId = undefined;
+        status = "idle";
+        pendingApproval = undefined;
+      }
     }
     if (event.type === "turn.started") {
+      if (terminalTurnIds.has(event.turnId)) {
+        continue;
+      }
       currentTurnId = event.turnId;
       status = "running";
       pendingApproval = undefined;
@@ -192,6 +212,7 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
         stepId: event.stepId,
         label: event.label,
         status: event.status,
+        turnId: event.turnId,
       });
       if (event.status === "failed") status = "failed";
     }
@@ -212,18 +233,39 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
       currentTurnId = event.turnId;
       status = event.outcome === "success" ? "completed" : "failed";
       pendingApproval = undefined;
+      terminalTurnIds.add(event.turnId);
+      for (const [stepId, step] of steps) {
+        if (step.turnId === event.turnId && step.status === "running") {
+          steps.set(stepId, {
+            ...step,
+            status: event.outcome === "success" ? "completed" : "failed",
+          });
+        }
+      }
     }
   }
 
   return {
     threadId: first.threadId,
     title,
+    cwd,
+    threadSource,
     hostId: first.hostId,
     status,
     currentTurnId,
     lastEventAt,
     pendingApproval,
-    steps: Array.from(steps.values()),
-    recentLogs: logs.slice(-100),
+    steps: Array.from(steps.values()).map(({ turnId: _turnId, ...step }) => step),
+    recentLogs: logs.slice(-snapshotRecentLogLimit()),
   };
+}
+
+function isSyntheticDesktopTurnId(threadId: string, turnId: string): boolean {
+  return turnId.startsWith(`${threadId}-`) && /-\d{12,}$/.test(turnId);
+}
+
+function snapshotRecentLogLimit(): number {
+  const value = Number(process.env.SNAPSHOT_RECENT_LOG_LIMIT ?? 2000);
+  if (!Number.isFinite(value) || value <= 0) return 2000;
+  return Math.floor(value);
 }

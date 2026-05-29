@@ -15,6 +15,7 @@ final class MonitorViewModel: ObservableObject {
     @Published var lastUpdatedText = "尚未同步"
     @Published var selectedFilter: ThreadFilter = .all
     @Published var showingSettings = false
+    @Published var sendingCommand = false
 
     private let store = ConfigurationStore()
     private let notifier = MonitorNotificationService()
@@ -24,16 +25,28 @@ final class MonitorViewModel: ObservableObject {
     private var remoteDeviceToken: String?
     private var notifiedSnapshotKeys = Set<String>()
 
+    var primarySnapshots: [ThreadSnapshot] {
+        ProjectSnapshot.grouped(from: snapshots).flatMap(\.snapshots)
+    }
+
     var summary: DashboardSummary {
-        DashboardSummary(snapshots: snapshots)
+        DashboardSummary(snapshots: primarySnapshots)
     }
 
     var visibleSnapshots: [ThreadSnapshot] {
-        ThreadSnapshot.prioritizedForDashboard(selectedFilter.apply(to: snapshots))
+        ThreadSnapshot.prioritizedForDashboard(selectedFilter.apply(to: primarySnapshots))
+    }
+
+    var visibleProjects: [ProjectSnapshot] {
+        ProjectSnapshot.grouped(from: snapshots, filter: selectedFilter)
     }
 
     var primarySnapshot: ThreadSnapshot? {
-        ThreadSnapshot.prioritizedForDashboard(snapshots).first
+        ThreadSnapshot.prioritizedForDashboard(primarySnapshots).first
+    }
+
+    var primaryProject: ProjectSnapshot? {
+        ProjectSnapshot.grouped(from: snapshots).first
     }
 
     var connectionTitle: String {
@@ -79,8 +92,15 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
-    func startMonitoring() async {
-        saveConfiguration()
+    func startMonitoring(persistConfiguration: Bool = true) async {
+        clearTransientWebSocketError()
+        if socket != nil {
+            _ = await refresh()
+            return
+        }
+        if persistConfiguration {
+            saveConfiguration()
+        }
         let refreshed = await refresh()
         if refreshed {
             await requestRemotePushRegistration()
@@ -93,12 +113,22 @@ final class MonitorViewModel: ObservableObject {
         await startMonitoring()
     }
 
+    func resumeMonitoringIfConfigured() async {
+        guard hasConfiguration else { return }
+        if socket == nil {
+            await startMonitoring(persistConfiguration: false)
+        } else {
+            _ = await refresh()
+        }
+    }
+
     func stopMonitoring() {
         receiveTask?.cancel()
         receiveTask = nil
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         connected = false
+        connecting = false
     }
 
     func clearConfiguration() {
@@ -152,6 +182,7 @@ final class MonitorViewModel: ObservableObject {
 
     private func connectLive() {
         guard let client = makeClient() else { return }
+        guard socket == nil else { return }
         receiveTask?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
 
@@ -170,11 +201,26 @@ final class MonitorViewModel: ObservableObject {
                 _ = try await socket.receive()
                 _ = await refresh()
             } catch {
-                if Self.isCancellation(error) {
+                if self.socket !== socket {
                     return
                 }
+                if Self.isCancellation(error) {
+                    self.socket = nil
+                    receiveTask = nil
+                    try? await Task.sleep(for: .seconds(1))
+                    if !Task.isCancelled {
+                        let refreshed = await refresh()
+                        if refreshed {
+                            connectLive()
+                        }
+                    }
+                    return
+                }
+                self.socket = nil
+                receiveTask = nil
                 connected = false
-                errorMessage = "WebSocket 已断开，正在尝试重新连接。"
+                connecting = true
+                errorMessage = Self.webSocketDisconnectedMessage
                 noticeMessage = nil
                 try? await Task.sleep(for: .seconds(3))
                 if !Task.isCancelled {
@@ -185,6 +231,36 @@ final class MonitorViewModel: ObservableObject {
                 }
                 return
             }
+        }
+    }
+
+    @discardableResult
+    func sendCommand(to snapshot: ThreadSnapshot, prompt: String) async -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard let client = makeClient() else {
+            errorMessage = validationMessage()
+            return false
+        }
+
+        sendingCommand = true
+        errorMessage = nil
+        noticeMessage = nil
+        do {
+            try await client.sendCommand(
+                hostId: snapshot.hostId,
+                threadId: snapshot.threadId,
+                cwd: snapshot.cwd,
+                prompt: trimmed
+            )
+            sendingCommand = false
+            noticeMessage = "已发送到 Mac Codex"
+            _ = await refresh()
+            return true
+        } catch {
+            sendingCommand = false
+            errorMessage = Self.userFacingMessage(for: error)
+            return false
         }
     }
 
@@ -295,6 +371,14 @@ final class MonitorViewModel: ObservableObject {
         return error.localizedDescription
     }
 
+    private func clearTransientWebSocketError() {
+        if errorMessage == Self.webSocketDisconnectedMessage {
+            errorMessage = nil
+        }
+    }
+
+    private static let webSocketDisconnectedMessage = "WebSocket 已断开，正在尝试重新连接。"
+
     nonisolated static func isCancellation(_ error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -325,6 +409,7 @@ final class MonitorViewModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var viewModel = MonitorViewModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -352,21 +437,21 @@ struct ContentView: View {
                             DashboardPanel(viewModel: viewModel)
                             FilterStrip(selection: $viewModel.selectedFilter)
 
-                            if viewModel.visibleSnapshots.isEmpty {
+                            if viewModel.visibleProjects.isEmpty {
                                 EmptyDashboardView(hasSnapshots: !viewModel.snapshots.isEmpty)
                                     .frame(maxWidth: .infinity)
                                     .padding(.top, 28)
                             } else {
                                 LazyVStack(spacing: 12) {
-                                    ForEach(viewModel.visibleSnapshots) { snapshot in
+                                    ForEach(viewModel.visibleProjects) { project in
                                         NavigationLink {
-                                            LiveThreadDetailView(
+                                            LiveProjectDetailView(
                                                 viewModel: viewModel,
-                                                threadId: snapshot.threadId,
-                                                fallback: snapshot
+                                                projectId: project.id,
+                                                fallback: project
                                             )
                                         } label: {
-                                            ThreadCard(snapshot: snapshot)
+                                            ProjectCard(project: project)
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -401,6 +486,10 @@ struct ContentView: View {
                     await viewModel.startMonitoring()
                 }
             }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                Task { await viewModel.resumeMonitoringIfConfigured() }
+            }
         }
     }
 }
@@ -415,6 +504,80 @@ private struct LiveThreadDetailView: View {
             viewModel: viewModel,
             snapshot: ThreadSnapshot.find(threadId, in: viewModel.snapshots) ?? fallback
         )
+    }
+}
+
+private struct LiveProjectDetailView: View {
+    @ObservedObject var viewModel: MonitorViewModel
+    let projectId: String
+    let fallback: ProjectSnapshot
+
+    var body: some View {
+        ProjectDetailView(
+            viewModel: viewModel,
+            project: ProjectSnapshot.find(projectId, in: viewModel.snapshots) ?? fallback
+        )
+    }
+}
+
+private struct ProjectDetailView: View {
+    @ObservedObject var viewModel: MonitorViewModel
+    let project: ProjectSnapshot
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedFilter: ThreadFilter = .all
+
+    private var visibleSnapshots: [ThreadSnapshot] {
+        ThreadSnapshot.prioritizedForDashboard(selectedFilter.apply(to: project.snapshots))
+    }
+
+    var body: some View {
+        ZStack {
+            CodexTheme.background.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                ProjectTopBar(project: project) {
+                    dismiss()
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ProjectHeroPanel(project: project)
+                        FilterStrip(selection: $selectedFilter)
+
+                        if visibleSnapshots.isEmpty {
+                            EmptyProjectThreadsView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 28)
+                        } else {
+                            LazyVStack(spacing: 12) {
+                                ForEach(visibleSnapshots) { snapshot in
+                                    NavigationLink {
+                                        LiveThreadDetailView(
+                                            viewModel: viewModel,
+                                            threadId: snapshot.threadId,
+                                            fallback: snapshot
+                                        )
+                                    } label: {
+                                        ThreadCard(snapshot: snapshot)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 18)
+                    .padding(.bottom, 96)
+                }
+                .scrollIndicators(.hidden)
+                .refreshable {
+                    await viewModel.refresh()
+                }
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -569,8 +732,8 @@ private struct DashboardPanel: View {
     }
 
     private var heroSubtitle: String {
-        if let snapshot = viewModel.primarySnapshot {
-            return "\(snapshot.title) · \(snapshot.hostId)"
+        if let project = viewModel.primaryProject {
+            return "\(project.name) · \(project.conversationCount) 个对话"
         }
         return "最后同步 \(viewModel.lastUpdatedText)"
     }
@@ -668,6 +831,237 @@ private struct FilterStrip: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ProjectCard: View {
+    let project: ProjectSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ProjectGlyph(project: project)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(project.name)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(CodexTheme.primaryText)
+                        .lineLimit(2)
+                    Text(project.path)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(CodexTheme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                if let snapshot = project.primarySnapshot {
+                    StatusBadge(status: snapshot.status)
+                }
+            }
+
+            if let snapshot = project.primarySnapshot {
+                Text(snapshot.latestActivityText)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(snapshot.status == .waitingForApproval ? CodexTheme.warning : CodexTheme.secondaryText)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                ProjectMetricPill(title: "对话", value: project.conversationCount, tint: CodexTheme.accent)
+                ProjectMetricPill(title: "待处理", value: project.summary.actionRequiredCount, tint: CodexTheme.warning)
+                ProjectMetricPill(title: "进行中", value: project.summary.activeCount, tint: CodexTheme.success)
+                ProjectMetricPill(title: "失败", value: project.summary.failedCount, tint: CodexTheme.danger)
+            }
+
+            HStack {
+                Label(project.lastEventAt, systemImage: "clock")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CodexTheme.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                Label(project.hostLabel, systemImage: "desktopcomputer")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CodexTheme.tertiaryText)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(CodexTheme.tertiaryText)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CodexTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(projectTint.opacity(project.summary.actionRequiredCount > 0 ? 0.44 : 0.18), lineWidth: 1)
+        )
+    }
+
+    private var projectTint: Color {
+        project.primarySnapshot?.status.tint ?? CodexTheme.border
+    }
+}
+
+private struct ProjectGlyph: View {
+    let project: ProjectSnapshot
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(tint.opacity(0.12))
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .frame(width: 42, height: 42)
+    }
+
+    private var symbol: String {
+        if project.summary.actionRequiredCount > 0 { return "hand.raised.fill" }
+        if project.summary.activeCount > 0 { return "bolt.fill" }
+        if project.summary.failedCount > 0 { return "exclamationmark.triangle.fill" }
+        return "folder.fill"
+    }
+
+    private var tint: Color {
+        if project.summary.actionRequiredCount > 0 { return CodexTheme.warning }
+        if project.summary.activeCount > 0 { return CodexTheme.accent }
+        if project.summary.failedCount > 0 { return CodexTheme.danger }
+        return CodexTheme.success
+    }
+}
+
+private struct ProjectMetricPill: View {
+    let title: String
+    let value: Int
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("\(value)")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(CodexTheme.secondaryText)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
+        .background(CodexTheme.surfaceRaised.opacity(0.82), in: Capsule())
+        .overlay(Capsule().stroke(CodexTheme.border, lineWidth: 1))
+    }
+}
+
+private struct ProjectTopBar: View {
+    let project: ProjectSnapshot
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: close) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .frame(width: 38, height: 38)
+                    .background(CodexTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(project.name)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .lineLimit(1)
+                Text(project.path)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CodexTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+        }
+    }
+}
+
+private struct ProjectHeroPanel: View {
+    let project: ProjectSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                ProjectGlyph(project: project)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(projectTitle)
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .foregroundStyle(CodexTheme.primaryText)
+                        .lineLimit(2)
+                    Text("\(project.conversationCount) 个对话 · \(project.hostLabel)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(CodexTheme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+
+            if let snapshot = project.primarySnapshot {
+                Text(snapshot.latestActivityText)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(snapshot.status == .waitingForApproval ? CodexTheme.warning : CodexTheme.secondaryText)
+                    .lineLimit(3)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(CodexTheme.surfaceRaised.opacity(0.66), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            HStack(spacing: 10) {
+                SummaryPill(title: "全部", value: project.summary.totalCount, tint: CodexTheme.accent)
+                SummaryPill(title: "待处理", value: project.summary.actionRequiredCount, tint: CodexTheme.warning)
+                SummaryPill(title: "进行中", value: project.summary.activeCount, tint: CodexTheme.success)
+                SummaryPill(title: "失败", value: project.summary.failedCount, tint: CodexTheme.danger)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CodexTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(CodexTheme.border, lineWidth: 1)
+        )
+    }
+
+    private var projectTitle: String {
+        if project.summary.actionRequiredCount > 0 { return "等待批准" }
+        if project.summary.activeCount > 0 { return "正在执行" }
+        if project.summary.failedCount > 0 { return "需要检查" }
+        return "项目对话"
+    }
+}
+
+private struct EmptyProjectThreadsView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(CodexTheme.tertiaryText)
+                .frame(width: 64, height: 64)
+                .background(CodexTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text("暂无匹配对话")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(CodexTheme.primaryText)
+            Text("切换筛选条件可以查看该项目下的其他 Codex 对话。")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CodexTheme.secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 28)
     }
 }
 
@@ -899,97 +1293,649 @@ private struct ThreadDetailView: View {
     @ObservedObject var viewModel: MonitorViewModel
     let snapshot: ThreadSnapshot
     @Environment(\.dismiss) private var dismiss
-    @State private var logsExpanded = false
+    @State private var commandText = ""
+    @State private var showingDebugLogs = false
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack {
             CodexTheme.background.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                DetailTopBar(title: snapshot.title) {
+                DetailTopBar(title: snapshot.title, snapshot: snapshot) {
                     dismiss()
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        DetailStatusPanel(snapshot: snapshot)
+                ThreadConversationView(snapshot: snapshot) {
+                    composerFocused = false
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 10) {
+                if let errorMessage = viewModel.errorMessage {
+                    ErrorBanner(message: errorMessage)
+                        .padding(.horizontal, 16)
+                } else if let noticeMessage = viewModel.noticeMessage {
+                    NoticeBanner(message: noticeMessage)
+                        .padding(.horizontal, 16)
+                }
 
-                        if let pendingApproval = snapshot.pendingApproval {
-                            ApprovalPanel(pendingApproval: pendingApproval)
-                        }
-
-                        DetailSection(title: "执行步骤", symbol: "list.bullet.rectangle") {
-                            if snapshot.steps.isEmpty {
-                                EmptyLine(text: "暂无步骤")
-                            } else {
-                                VStack(spacing: 10) {
-                                    ForEach(snapshot.steps) { step in
-                                        StepRow(step: step)
-                                    }
-                                }
-                            }
-                        }
-
-                        DetailSection(title: "最近日志", symbol: "text.alignleft") {
-                            if snapshot.recentLogs.isEmpty {
-                                EmptyLine(text: "暂无日志")
-                            } else {
-                                VStack(spacing: 10) {
-                                    ForEach(displayedLogs) { log in
-                                        LogRow(log: log)
-                                    }
-                                    if snapshot.recentLogs.count > 3 {
-                                        Button {
-                                            logsExpanded.toggle()
-                                        } label: {
-                                            Label(logsExpanded ? "收起日志" : "展开全部", systemImage: logsExpanded ? "chevron.up" : "chevron.down")
-                                        }
-                                        .buttonStyle(CodexSecondaryButtonStyle())
-                                    }
-                                }
-                            }
-                        }
-
-                        DetailSection(title: "操作", symbol: "slider.horizontal.3") {
-                            VStack(spacing: 10) {
-                                Button {
-                                    Task { await viewModel.refresh() }
-                                } label: {
-                                    Label("刷新", systemImage: "arrow.clockwise")
-                                }
-                                .buttonStyle(CodexSecondaryButtonStyle())
-
-                                HStack(spacing: 10) {
-                                    CopyButton(text: snapshot.copyableLogText, label: "复制日志")
-                                        .buttonStyle(CodexSecondaryButtonStyle())
-                                        .disabled(snapshot.recentLogs.isEmpty)
-
-                                    CopyButton(text: snapshot.pendingApproval?.commandPreview ?? "", label: "复制命令")
-                                        .buttonStyle(CodexSecondaryButtonStyle(tint: CodexTheme.warning))
-                                        .disabled(snapshot.pendingApproval == nil)
-                                }
+                CodexComposerBar(
+                    text: $commandText,
+                    isFocused: $composerFocused,
+                    sending: viewModel.sendingCommand,
+                    canCopyLogs: !snapshot.recentLogs.isEmpty,
+                    hasApprovalCommand: snapshot.pendingApproval != nil,
+                    copyableLogs: snapshot.copyableLogText,
+                    approvalCommand: snapshot.pendingApproval?.commandPreview ?? "",
+                    showDebugLogs: { showingDebugLogs = true },
+                    refresh: { Task { await viewModel.refresh() } },
+                    send: {
+                        let prompt = commandText
+                        Task {
+                            if await viewModel.sendCommand(to: snapshot, prompt: prompt) {
+                                commandText = ""
+                                composerFocused = false
                             }
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 18)
-                    .padding(.bottom, 28)
-                }
-                .scrollIndicators(.hidden)
+                )
             }
+        }
+        .sheet(isPresented: $showingDebugLogs) {
+            DebugLogsSheet(snapshot: snapshot)
+        }
+        .onDisappear {
+            composerFocused = false
         }
         .toolbar(.hidden, for: .navigationBar)
     }
+}
 
-    private var displayedLogs: [LogLine] {
-        logsExpanded ? snapshot.recentLogs : Array(snapshot.recentLogs.suffix(3))
+private struct ThreadConversationView: View {
+    let snapshot: ThreadSnapshot
+    let dismissKeyboard: () -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    RuntimeHeader(snapshot: snapshot)
+
+                    if snapshot.timelineBlocks.isEmpty {
+                        EmptyConversationRuntimeView()
+                    } else {
+                        ForEach(snapshot.timelineBlocks) { block in
+                            TimelineBlockRow(block: block)
+                        }
+                    }
+
+                    if snapshot.status == .running {
+                        RunningAssistantIndicator()
+                    }
+
+                    RuntimeActivityStrip(snapshot: snapshot)
+
+                    Color.clear.frame(height: 16).id("bottom")
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture(perform: dismissKeyboard)
+            .onAppear {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+        }
+    }
+}
+
+private struct RuntimeHeader: View {
+    let snapshot: ThreadSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                StatusOrb(status: snapshot.status)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(snapshot.status == .running ? "Codex is working" : "Codex session")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(CodexTheme.primaryText)
+                    Text("\(snapshot.statusLabel) · \(snapshot.hostId)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(CodexTheme.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                RuntimeMetric(label: "messages", value: "\(snapshot.timelineItems.count)")
+                RuntimeMetric(label: "steps", value: "\(snapshot.steps.count)")
+                RuntimeMetric(label: "updated", value: shortTime(snapshot.lastEventAt))
+            }
+        }
+        .padding(16)
+        .background(
+            LinearGradient(
+                colors: [
+                    CodexTheme.surface,
+                    CodexTheme.surfaceRaised.opacity(0.62)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(CodexTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func shortTime(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "T", with: " ")
+            .replacingOccurrences(of: "Z", with: "")
+            .split(separator: ".")
+            .first
+            .map(String.init) ?? value
+    }
+}
+
+private struct StatusOrb: View {
+    let status: ThreadStatus
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(status.tint.opacity(0.16))
+                .frame(width: 44, height: 44)
+            Image(systemName: status.symbol)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(status.tint)
+        }
+    }
+}
+
+private struct RuntimeMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(CodexTheme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(CodexTheme.tertiaryText)
+                .textCase(.uppercase)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(CodexTheme.background.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct CodexComposerBar: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let sending: Bool
+    let canCopyLogs: Bool
+    let hasApprovalCommand: Bool
+    let copyableLogs: String
+    let approvalCommand: String
+    let showDebugLogs: () -> Void
+    let refresh: () -> Void
+    let send: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button(action: refresh) {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(CompactPillButtonStyle())
+
+                Button(action: showDebugLogs) {
+                    Label("运行记录", systemImage: "waveform.path.ecg")
+                }
+                .buttonStyle(CompactPillButtonStyle())
+                .disabled(!canCopyLogs)
+
+                Spacer()
+
+                CopyButton(text: copyableLogs, label: "复制")
+                    .buttonStyle(CompactPillButtonStyle())
+                    .disabled(!canCopyLogs)
+
+                CopyButton(text: approvalCommand, label: "命令")
+                    .buttonStyle(CompactPillButtonStyle(tint: CodexTheme.warning))
+                    .disabled(!hasApprovalCommand)
+            }
+
+            HStack(alignment: .bottom, spacing: 12) {
+                TextField("Message Codex on your Mac...", text: $text, axis: .vertical)
+                    .focused(isFocused)
+                    .lineLimit(1...6)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .frame(minHeight: 46, alignment: .topLeading)
+                    .background(CodexTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(CodexTheme.border, lineWidth: 1)
+                    )
+
+                Button(action: send) {
+                    Group {
+                        if sending {
+                            ProgressView()
+                                .tint(CodexTheme.background)
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 17, weight: .bold))
+                        }
+                    }
+                    .frame(width: 46, height: 46)
+                }
+                .background(canSend ? CodexTheme.primaryText : CodexTheme.surfaceRaised, in: Circle())
+                .foregroundStyle(canSend ? CodexTheme.background : CodexTheme.tertiaryText)
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .accessibilityLabel("发送指令到 Mac Codex")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(CodexTheme.border)
+                .frame(height: 1)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("收起") {
+                    isFocused.wrappedValue = false
+                }
+            }
+        }
+    }
+
+    private var canSend: Bool {
+        !sending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private struct TimelineBlockRow: View {
+    let block: TimelineBlock
+
+    var body: some View {
+        switch block {
+        case .item(let item):
+            TimelineRow(item: item)
+        case .commandGroup(let group):
+            CommandTimelineGroupBlock(group: group)
+        }
+    }
+}
+
+private struct TimelineRow: View {
+    let item: TimelineItem
+
+    var body: some View {
+        switch item.kind {
+        case .user:
+            HStack(alignment: .top) {
+                Spacer(minLength: 44)
+                Text(item.text)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(CodexTheme.background)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+                    .background(CodexTheme.primaryText, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+        case .assistant:
+            AssistantTimelineMessage(item: item)
+        case .reasoning:
+            ThinkingDisclosureRow(item: item)
+        case .tool, .terminal:
+            CommandTimelineBlock(item: item)
+        case .approval:
+            ApprovalTimelineBlock(item: item)
+        case .status:
+            EmptyView()
+        }
+    }
+}
+
+private struct AssistantTimelineMessage: View {
+    let item: TimelineItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            CodexAvatar()
+            Text(item.text)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(CodexTheme.primaryText)
+                .textSelection(.enabled)
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ThinkingDisclosureRow: View {
+    let item: TimelineItem
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            Text(item.text)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(CodexTheme.secondaryText)
+                .textSelection(.enabled)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 6)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkle.magnifyingglass")
+                Text(expanded ? "Thinking" : "Thinking · \(thinkingPreview)")
+                    .lineLimit(1)
+                Spacer()
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(CodexTheme.tertiaryText)
+        }
+        .padding(.leading, 44)
+        .padding(.vertical, 2)
+    }
+
+    private var thinkingPreview: String {
+        item.text.split(separator: "\n").first.map(String.init) ?? "Thinking"
+    }
+}
+
+private struct CommandTimelineGroupBlock: View {
+    let group: TimelineCommandGroup
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(CodexTheme.tertiaryText)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.title)
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundStyle(CodexTheme.secondaryText)
+                        Text(group.summary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(CodexTheme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(CodexTheme.tertiaryText)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(group.items) { item in
+                        CommandTimelineInlineItem(item: item)
+                    }
+                }
+                .padding(.top, 12)
+            }
+        }
+        .padding(14)
+        .padding(.leading, 32)
+        .background(CodexTheme.surfaceRaised.opacity(0.68), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(CodexTheme.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct CommandTimelineInlineItem: View {
+    let item: TimelineItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Text(item.kind == .terminal ? "TERMINAL" : "TOOL")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(CodexTheme.tertiaryText)
+                Text(commandPreview)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CodexTheme.secondaryText)
+                    .lineLimit(1)
+                Spacer()
+            }
+
+            Text(item.text)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(CodexTheme.primaryText)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(CodexTheme.background.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var commandPreview: String {
+        item.text.split(separator: "\n").first.map(String.init) ?? item.title
+    }
+}
+
+private struct CommandTimelineBlock: View {
+    let item: TimelineItem
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: item.kind == .terminal ? "terminal" : "chevron.right.square")
+                        .foregroundStyle(CodexTheme.tertiaryText)
+                    Text(item.kind == .terminal ? "terminal" : "tool")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(CodexTheme.tertiaryText)
+                        .textCase(.uppercase)
+                    Text(commandPreview)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(CodexTheme.secondaryText)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(CodexTheme.tertiaryText)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Text(item.text)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 10)
+            }
+        }
+        .padding(12)
+        .padding(.leading, 32)
+        .background(CodexTheme.surfaceRaised.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(CodexTheme.border, lineWidth: 1)
+        )
+    }
+
+    private var commandPreview: String {
+        item.text.split(separator: "\n").first.map(String.init) ?? item.title
+    }
+}
+
+private struct ApprovalTimelineBlock: View {
+    let item: TimelineItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "hand.raised.fill")
+                .foregroundStyle(CodexTheme.warning)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("等待批准")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(CodexTheme.warning)
+                Text(item.text)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(14)
+        .background(CodexTheme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct RunningAssistantIndicator: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            CodexAvatar()
+            ProgressView()
+                .controlSize(.small)
+            Text("Codex 正在工作...")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(CodexTheme.secondaryText)
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct EmptyConversationRuntimeView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(CodexTheme.tertiaryText)
+            Text("暂无对话内容")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(CodexTheme.primaryText)
+            Text("Codex 的回复会优先显示在这里；工具和系统记录收在底部运行记录里。")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CodexTheme.secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+}
+
+private struct RuntimeActivityStrip: View {
+    let snapshot: ThreadSnapshot
+
+    var body: some View {
+        if !snapshot.steps.isEmpty || snapshot.recentLogs.contains(where: { $0.semanticStream == "status" }) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.rectangle.portrait")
+                Text(activityText)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(CodexTheme.tertiaryText)
+            .padding(.leading, 44)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var activityText: String {
+        let running = snapshot.steps.filter { $0.status == "running" }.count
+        if running > 0 {
+            return "\(running) 个工具仍在执行，点底部“运行记录”查看全部"
+        }
+        return "\(snapshot.steps.count) 条工具步骤已收起，点底部“运行记录”查看"
+    }
+}
+
+private struct CodexAvatar: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(CodexTheme.primaryText)
+            Text("C")
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(CodexTheme.background)
+        }
+        .frame(width: 32, height: 32)
+    }
+}
+
+private struct DebugLogsSheet: View {
+    let snapshot: ThreadSnapshot
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(snapshot.recentLogs) { log in
+                        LogRow(log: log)
+                    }
+                }
+                .padding(16)
+            }
+            .background(CodexTheme.background)
+            .navigationTitle("调试日志")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
     }
 }
 
 private struct DetailTopBar: View {
     let title: String
+    let snapshot: ThreadSnapshot
     let close: () -> Void
 
     var body: some View {
@@ -1003,10 +1949,16 @@ private struct DetailTopBar: View {
             }
             .buttonStyle(.plain)
 
-            Text(title)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(CodexTheme.primaryText)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(CodexTheme.primaryText)
+                    .lineLimit(1)
+                Text("\(snapshot.statusLabel) · \(snapshot.hostId)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CodexTheme.secondaryText)
+                    .lineLimit(1)
+            }
 
             Spacer()
         }
@@ -1382,6 +2334,22 @@ private struct CodexSecondaryButtonStyle: ButtonStyle {
                     .stroke(CodexTheme.border, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
+
+private struct CompactPillButtonStyle: ButtonStyle {
+    var tint: Color = CodexTheme.secondaryText
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 11)
+            .frame(height: 34)
+            .background(CodexTheme.surface.opacity(0.76), in: Capsule())
+            .overlay(Capsule().stroke(CodexTheme.border, lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }
 

@@ -1,4 +1,5 @@
 import websocket from "@fastify/websocket";
+import { randomUUID } from "node:crypto";
 import fastify from "fastify";
 import {
   isCodexMonitorEvent,
@@ -65,16 +66,129 @@ export async function buildServer(options: BuildOptions) {
 
     const event: CodexMonitorEvent = redactEvent(body);
     store.insert(event);
-    const payload = JSON.stringify({ type: "event", event });
-    for (const client of mobileClients) {
-      try {
-        client.send(payload);
-      } catch {
-        mobileClients.delete(client);
-      }
-    }
+    broadcastEvent(mobileClients, event);
     await notifyDevices(store, pushProvider, event);
     return reply.code(202).send({ ok: true });
+  });
+
+  app.post("/relay/events/batch", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("RELAY_TOKEN"));
+    const body = request.body;
+    if (!isEventBatch(body)) {
+      return reply.code(400).send({ error: "Invalid event batch" });
+    }
+
+    const events = body.events.map((event) => redactEvent(event));
+    store.insertMany(events);
+    for (const event of events) {
+      broadcastEvent(mobileClients, event);
+      await notifyDevices(store, pushProvider, event);
+    }
+    return reply.code(202).send({ ok: true, count: events.length });
+  });
+
+  app.post("/api/commands", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("MOBILE_TOKEN"));
+    const body = request.body;
+    if (!isCommandRequest(body)) {
+      return reply.code(400).send({ error: "Invalid command request" });
+    }
+    if (!remoteCommandsEnabled()) {
+      return reply.code(403).send({ error: "Remote commands are disabled" });
+    }
+
+    const at = new Date().toISOString();
+    const commandId = randomUUID();
+    const command = {
+      id: commandId,
+      hostId: body.hostId.trim(),
+      threadId: optionalTrimmed(body.threadId),
+      cwd: optionalTrimmed(body.cwd),
+      prompt: body.prompt.trim().slice(0, 8000),
+      at,
+    };
+    if (!allowedValue("REMOTE_COMMAND_HOST_ALLOWLIST", command.hostId)) {
+      return reply.code(403).send({ error: "Host is not allowed for remote commands" });
+    }
+    if (command.cwd && !allowedPath("REMOTE_COMMAND_CWD_ALLOWLIST", command.cwd)) {
+      return reply.code(403).send({ error: "Working directory is not allowed" });
+    }
+    store.enqueueCommand(command);
+
+    const threadId = command.threadId ?? `mobile-command-${commandId}`;
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId,
+        title: command.prompt.slice(0, 80),
+        cwd: command.cwd,
+        at,
+        hostId: command.hostId,
+      },
+      {
+        type: "turn.started",
+        threadId,
+        turnId: commandId,
+        promptPreview: command.prompt.slice(0, 240),
+        at,
+        hostId: command.hostId,
+      },
+      {
+        type: "log.appended",
+        threadId,
+        turnId: commandId,
+        stream: "user",
+        text: command.prompt,
+        at,
+        hostId: command.hostId,
+      },
+      {
+        type: "step.updated",
+        threadId,
+        turnId: commandId,
+        stepId: `remote-command-${commandId}`,
+        label: "Queued from iPhone",
+        status: "queued",
+        at,
+        hostId: command.hostId,
+      },
+    ];
+    for (const event of events) {
+      const redacted = redactEvent(event);
+      store.insert(redacted);
+      broadcastEvent(mobileClients, redacted);
+    }
+
+    return reply.code(202).send({ ok: true, commandId });
+  });
+
+  app.get("/relay/commands", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("RELAY_TOKEN"));
+    if (!remoteCommandsEnabled()) {
+      return reply.code(403).send({ error: "Remote commands are disabled" });
+    }
+    const hostId = hostIdFromQuery(request.query);
+    if (!hostId) {
+      return reply.code(400).send({ error: "Missing hostId" });
+    }
+    if (!allowedValue("REMOTE_COMMAND_HOST_ALLOWLIST", hostId)) {
+      return reply.code(403).send({ error: "Host is not allowed for remote commands" });
+    }
+    return store.claimQueuedCommands(hostId, 5, remoteCommandLeaseMs());
+  });
+
+  app.post("/relay/commands/:id/complete", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("RELAY_TOKEN"));
+    if (!remoteCommandsEnabled()) {
+      return reply.code(403).send({ error: "Remote commands are disabled" });
+    }
+    const id = (request.params as { id?: string }).id;
+    const body = request.body;
+    if (!id || !isCommandCompletion(body)) {
+      return reply.code(400).send({ error: "Invalid command completion" });
+    }
+    const updated = store.completeCommand(id, body.status, optionalTrimmed(body.summary));
+    return reply.code(updated ? 202 : 404).send(updated ? { ok: true } : { error: "Command not found" });
   });
 
   app.post("/api/devices/register", async (request, reply) => {
@@ -111,6 +225,26 @@ export async function buildServer(options: BuildOptions) {
   return app;
 }
 
+function broadcastEvent(clients: Set<MobileClient>, event: CodexMonitorEvent): void {
+  const payload = JSON.stringify({ type: "event", event });
+  for (const client of clients) {
+    try {
+      client.send(payload);
+    } catch {
+      clients.delete(client);
+    }
+  }
+}
+
+function isEventBatch(value: unknown): value is { events: CodexMonitorEvent[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const events = (value as { events?: unknown }).events;
+  return Array.isArray(events) &&
+    events.length > 0 &&
+    events.length <= 250 &&
+    events.every(isCodexMonitorEvent);
+}
+
 function isDeviceRegistration(value: unknown): value is {
   token: string;
   environment: PushEnvironment;
@@ -123,6 +257,80 @@ function isDeviceRegistration(value: unknown): value is {
     candidate.token.length <= 512 &&
     (candidate.environment === "sandbox" || candidate.environment === "production")
   );
+}
+
+function isCommandRequest(value: unknown): value is {
+  hostId: string;
+  threadId?: string;
+  cwd?: string;
+  prompt: string;
+} {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.hostId === "string" &&
+    candidate.hostId.trim().length > 0 &&
+    candidate.hostId.length <= 200 &&
+    typeof candidate.prompt === "string" &&
+    candidate.prompt.trim().length > 0 &&
+    candidate.prompt.length <= 8000 &&
+    optionalString(candidate.threadId, 200) &&
+    optionalString(candidate.cwd, 2000)
+  );
+}
+
+function isCommandCompletion(value: unknown): value is {
+  status: "completed" | "failed";
+  summary?: string;
+} {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    (candidate.status === "completed" || candidate.status === "failed") &&
+    optionalString(candidate.summary, 4000)
+  );
+}
+
+function optionalString(value: unknown, maxLength: number): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= maxLength);
+}
+
+function optionalTrimmed(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function hostIdFromQuery(query: unknown): string | undefined {
+  if (!query || typeof query !== "object") return undefined;
+  const value = (query as Record<string, unknown>).hostId;
+  return optionalTrimmed(value);
+}
+
+function remoteCommandsEnabled(): boolean {
+  return process.env.REMOTE_COMMANDS_ENABLED === "true";
+}
+
+function remoteCommandLeaseMs(): number {
+  const parsed = Number(process.env.REMOTE_COMMAND_LEASE_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60_000;
+}
+
+function allowedValue(envName: string, value: string): boolean {
+  return envList(envName).includes(value);
+}
+
+function allowedPath(envName: string, path: string): boolean {
+  const normalized = path.replace(/\/+$/g, "");
+  return envList(envName).some((allowed) => {
+    const base = allowed.replace(/\/+$/g, "");
+    return normalized === base || normalized.startsWith(`${base}/`);
+  });
+}
+
+function envList(envName: string): string[] {
+  return (process.env[envName] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 async function notifyDevices(

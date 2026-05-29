@@ -2,6 +2,7 @@ import Foundation
 
 enum MonitorClientError: LocalizedError, Equatable {
     case httpStatus(Int)
+    case remoteCommandForbidden
     case invalidResponse
 
     var errorDescription: String? {
@@ -10,6 +11,8 @@ enum MonitorClientError: LocalizedError, Equatable {
             return "Mobile Token 无效，请检查连接设置。"
         case .httpStatus(let status):
             return "服务器返回异常状态码：\(status)"
+        case .remoteCommandForbidden:
+            return "服务器拒绝远程指令，请检查远程指令开关、Host 白名单或项目路径白名单。"
         case .invalidResponse:
             return "服务器响应格式异常。"
         }
@@ -75,6 +78,16 @@ final class MonitorClient {
         return request
     }
 
+    func makeCommandRequest(hostId: String, threadId: String?, cwd: String?, prompt: String) throws -> URLRequest {
+        var request = makeRequest(path: "/api/commands")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RemoteCommandPayload(hostId: hostId, threadId: threadId, cwd: cwd, prompt: prompt)
+        )
+        return request
+    }
+
     func fetchThreads() async throws -> [ThreadSnapshot] {
         let request = makeRequest(path: "/api/threads")
         let (data, response) = try await session.data(for: request)
@@ -107,6 +120,20 @@ final class MonitorClient {
         }
     }
 
+    func sendCommand(hostId: String, threadId: String?, cwd: String?, prompt: String) async throws {
+        let request = try makeCommandRequest(hostId: hostId, threadId: threadId, cwd: cwd, prompt: prompt)
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MonitorClientError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 403 {
+                throw MonitorClientError.remoteCommandForbidden
+            }
+            throw MonitorClientError.httpStatus(http.statusCode)
+        }
+    }
+
     func testConnection() async throws {
         _ = try await fetchThreads()
     }
@@ -115,4 +142,11 @@ final class MonitorClient {
 private struct DeviceRegistrationPayload: Encodable {
     let token: String
     let environment: String
+}
+
+private struct RemoteCommandPayload: Encodable {
+    let hostId: String
+    let threadId: String?
+    let cwd: String?
+    let prompt: String
 }
