@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="860" viewBox="0 0 420 860" role="img" aria-labelledby="title desc">
+  <title id="title">iPhonedex thread detail screenshot</title>
+  <desc id="desc">A safe illustrative screenshot of the thread detail view with merged assistant messages and compact composer.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5f0e8"/>
+      <stop offset="0.55" stop-color="#edf3f0"/>
+      <stop offset="1" stop-color="#f7f3ef"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#24302d" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="420" height="860" fill="#d8ded8"/>
+  <rect x="33" y="24" width="354" height="812" rx="48" fill="#101614" filter="url(#shadow)"/>
+  <rect x="45" y="38" width="330" height="784" rx="39" fill="url(#bg)"/>
+  <rect x="165" y="52" width="90" height="8" rx="4" fill="#101614" opacity="0.45"/>
+
+  <g transform="translate(65 82)">
+    <circle cx="18" cy="20" r="18" fill="#ffffff" stroke="#d7ded8"/>
+    <text x="18" y="26" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="18" fill="#16201c">‹</text>
+    <text x="48" y="17" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#16201c">codex iPhone agent v2</text>
+    <text x="48" y="37" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="11" fill="#607069">执行中 · macbook</text>
+  </g>
+
+  <g transform="translate(65 142)">
+    <rect width="290" height="104" rx="18" fill="#ffffff" fill-opacity="0.78" stroke="#d7ded8"/>
+    <circle cx="30" cy="32" r="22" fill="#dff2e5"/>
+    <text x="30" y="38" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#2f7d4a">●</text>
+    <text x="64" y="28" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="20" font-weight="700" fill="#16201c">Codex is working</text>
+    <text x="64" y="50" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">运行中 · 实时同步</text>
+    <rect x="16" y="70" width="78" height="22" rx="11" fill="#f4f7f3"/>
+    <text x="55" y="85" text-anchor="middle" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#607069">messages 8</text>
+    <rect x="106" y="70" width="64" height="22" rx="11" fill="#f4f7f3"/>
+    <text x="138" y="85" text-anchor="middle" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#607069">steps 3</text>
+    <rect x="182" y="70" width="84" height="22" rx="11" fill="#f4f7f3"/>
+    <text x="224" y="85" text-anchor="middle" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#607069">15:37:53</text>
+  </g>
+
+  <g transform="translate(65 278)">
+    <rect x="72" y="0" width="218" height="62" rx="22" fill="#16201c"/>
+    <text x="92" y="25" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="14" fill="#fffaf2">继续优化详情页滚动体验</text>
+    <text x="92" y="45" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#d9e0dc">并保持输入框紧凑。</text>
+  </g>
+
+  <g transform="translate(65 370)">
+    <rect x="0" y="2" width="32" height="32" rx="9" fill="#16201c"/>
+    <text x="16" y="23" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#fffaf2">C</text>
+    <text x="44" y="18" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" fill="#16201c">我把相邻回复合并成一条消息，</text>
+    <text x="44" y="42" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" fill="#16201c">工具输出仍然收进运行记录。</text>
+    <text x="44" y="76" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" fill="#16201c">这样滚动查看历史时，列表项身份</text>
+    <text x="44" y="100" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" fill="#16201c">更稳定，不会被实时刷新打断。</text>
+  </g>
+
+  <g transform="translate(101 514)">
+    <rect width="254" height="54" rx="16" fill="#ffffff" fill-opacity="0.72" stroke="#d7ded8"/>
+    <text x="18" y="23" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#607069">工具调用与终端输出</text>
+    <text x="18" y="40" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#8a9690">3 条记录 · exec_command: pnpm test</text>
+    <text x="230" y="34" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="16" fill="#607069">⌄</text>
+  </g>
+
+  <g transform="translate(65 606)">
+    <rect x="0" y="2" width="32" height="32" rx="9" fill="#16201c"/>
+    <text x="16" y="23" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#fffaf2">C</text>
+    <text x="44" y="20" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" fill="#16201c">测试已通过，准备同步到远端。</text>
+  </g>
+
+  <g transform="translate(65 708)">
+    <rect width="290" height="90" rx="22" fill="#ffffff" fill-opacity="0.92" stroke="#d7ded8"/>
+    <g transform="translate(14 12)">
+      <rect width="54" height="28" rx="14" fill="#f5f7f4" stroke="#d7ded8"/>
+      <text x="27" y="19" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="11" fill="#607069">刷新</text>
+      <rect x="62" width="72" height="28" rx="14" fill="#f5f7f4" stroke="#d7ded8"/>
+      <text x="98" y="19" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="11" fill="#607069">运行记录</text>
+      <rect x="208" width="54" height="28" rx="14" fill="#f5f7f4" stroke="#d7ded8"/>
+      <text x="235" y="19" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="11" fill="#607069">复制</text>
+    </g>
+    <rect x="14" y="52" width="216" height="36" rx="18" fill="#f7faf7" stroke="#d7ded8"/>
+    <text x="30" y="75" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="13" fill="#8a9690">Message Codex on your Mac...</text>
+    <circle cx="260" cy="70" r="18" fill="#16201c"/>
+    <text x="260" y="76" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="16" fill="#fffaf2">↑</text>
+  </g>
+</svg>

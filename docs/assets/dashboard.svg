@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="860" viewBox="0 0 420 860" role="img" aria-labelledby="title desc">
+  <title id="title">iPhonedex project dashboard screenshot</title>
+  <desc id="desc">A safe illustrative screenshot of the iPhone dashboard with project cards and connection status.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f2ea"/>
+      <stop offset="0.52" stop-color="#eef4f0"/>
+      <stop offset="1" stop-color="#f4f1f8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#24302d" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="420" height="860" fill="#d8ded8"/>
+  <rect x="33" y="24" width="354" height="812" rx="48" fill="#101614" filter="url(#shadow)"/>
+  <rect x="45" y="38" width="330" height="784" rx="39" fill="url(#bg)"/>
+  <rect x="165" y="52" width="90" height="8" rx="4" fill="#101614" opacity="0.45"/>
+
+  <g transform="translate(65 82)">
+    <rect x="0" y="0" width="40" height="40" rx="12" fill="#19201d"/>
+    <text x="20" y="27" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#f8f3e9">⌘</text>
+    <text x="54" y="18" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="25" font-weight="700" fill="#16201c">Codex</text>
+    <text x="54" y="38" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#61706a">topomotion.com/codex-monitor</text>
+    <rect x="214" y="6" width="74" height="28" rx="14" fill="#e4f3e8" stroke="#8fc79b"/>
+    <circle cx="230" cy="20" r="5" fill="#2f9e54"/>
+    <text x="240" y="24" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="11" font-weight="700" fill="#2f6f43">实时</text>
+  </g>
+
+  <g transform="translate(65 148)">
+    <rect width="290" height="118" rx="18" fill="#ffffff" fill-opacity="0.78" stroke="#d7ded8"/>
+    <text x="18" y="30" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#16201c">桌面 Codex 概览</text>
+    <g transform="translate(18 52)">
+      <rect width="58" height="46" rx="12" fill="#f4f7f3"/>
+      <text x="14" y="22" font-family="SF Mono, Menlo, monospace" font-size="16" font-weight="700" fill="#16201c">2</text>
+      <text x="14" y="37" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="9" fill="#69766f">项目</text>
+      <rect x="72" width="58" height="46" rx="12" fill="#edf6f3"/>
+      <text x="86" y="22" font-family="SF Mono, Menlo, monospace" font-size="16" font-weight="700" fill="#16201c">5</text>
+      <text x="86" y="37" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="9" fill="#69766f">会话</text>
+      <rect x="144" width="58" height="46" rx="12" fill="#fff6e7"/>
+      <text x="158" y="22" font-family="SF Mono, Menlo, monospace" font-size="16" font-weight="700" fill="#9b6514">1</text>
+      <text x="158" y="37" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="9" fill="#8c734f">待处理</text>
+      <rect x="216" width="58" height="46" rx="12" fill="#f1f3fb"/>
+      <text x="230" y="22" font-family="SF Mono, Menlo, monospace" font-size="16" font-weight="700" fill="#44508a">88ms</text>
+      <text x="230" y="37" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="9" fill="#69766f">热路径</text>
+    </g>
+  </g>
+
+  <g transform="translate(65 288)">
+    <rect x="0" y="0" width="56" height="30" rx="15" fill="#16201c"/>
+    <text x="28" y="20" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#fffaf2">全部</text>
+    <rect x="64" y="0" width="62" height="30" rx="15" fill="#ffffff" stroke="#d7ded8"/>
+    <text x="95" y="20" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">执行中</text>
+    <rect x="134" y="0" width="62" height="30" rx="15" fill="#ffffff" stroke="#d7ded8"/>
+    <text x="165" y="20" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">待处理</text>
+  </g>
+
+  <g transform="translate(65 344)">
+    <rect width="290" height="132" rx="16" fill="#ffffff" stroke="#d5ded8"/>
+    <circle cx="24" cy="27" r="10" fill="#28a65a" opacity="0.18"/>
+    <circle cx="24" cy="27" r="5" fill="#28a65a"/>
+    <text x="46" y="30" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#16201c">Codex iPhone Agent</text>
+    <text x="18" y="62" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">codex iPhone agent v2 · 正在执行</text>
+    <text x="18" y="84" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">正在整理会话详情和远程指令链路...</text>
+    <rect x="18" y="102" width="86" height="20" rx="10" fill="#eef5ef"/>
+    <text x="61" y="116" text-anchor="middle" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#2c7444">2 sessions</text>
+  </g>
+
+  <g transform="translate(65 492)">
+    <rect width="290" height="132" rx="16" fill="#ffffff" stroke="#d5ded8"/>
+    <circle cx="24" cy="27" r="10" fill="#f2a626" opacity="0.18"/>
+    <circle cx="24" cy="27" r="5" fill="#f2a626"/>
+    <text x="46" y="30" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#16201c">topomotion.com</text>
+    <text x="18" y="62" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="12" fill="#607069">等待批准 · Mac bridge</text>
+    <text x="18" y="84" font-family="SF Mono, Menlo, monospace" font-size="11" fill="#8d641d">pnpm build</text>
+    <rect x="18" y="102" width="74" height="20" rx="10" fill="#fff4d9"/>
+    <text x="55" y="116" text-anchor="middle" font-family="SF Mono, Menlo, monospace" font-size="10" fill="#8d641d">action</text>
+  </g>
+
+  <g transform="translate(65 730)">
+    <rect width="290" height="58" rx="24" fill="#ffffff" fill-opacity="0.86" stroke="#d5ded8"/>
+    <text x="36" y="36" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="20" fill="#16201c">↻</text>
+    <text x="145" y="36" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#16201c">最后同步 15:37:53</text>
+    <text x="254" y="36" text-anchor="middle" font-family="SF Pro Display, Inter, Arial, sans-serif" font-size="19" fill="#16201c">⚙</text>
+  </g>
+</svg>

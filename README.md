@@ -96,6 +96,14 @@ flowchart TD
 
 详情页会把相邻的 Codex 回复合并成一条可读消息，工具调用和终端输出折叠在运行记录里。输入框默认保持紧凑，会随着输入内容增长。
 
+## 页面截图
+
+以下截图使用安全示意数据，不包含真实 token、主机密钥、私有会话内容或服务器凭据。
+
+| 项目首页 | 会话详情 | 远程指令 |
+| --- | --- | --- |
+| ![项目首页](docs/assets/dashboard.svg) | ![会话详情](docs/assets/thread-detail.svg) | ![远程指令](docs/assets/command-flow.svg) |
+
 ## 目录结构
 
 ```text
@@ -223,4 +231,3 @@ flowchart LR
 - bridge 异步执行远程命令
 - iPhone 详情页动态输入框、稳定滚动和回复合并
 - 真机 build/install/launch 验证链路
-
