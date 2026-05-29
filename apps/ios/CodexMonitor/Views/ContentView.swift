@@ -23,6 +23,7 @@ final class MonitorViewModel: ObservableObject {
     private var receiveTask: Task<Void, Never>?
     private var notificationObservers: [NSObjectProtocol] = []
     private var remoteDeviceToken: String?
+    private var registeredRemoteDeviceKey: String?
     private var notifiedSnapshotKeys = Set<String>()
 
     var primarySnapshots: [ThreadSnapshot] {
@@ -166,6 +167,7 @@ final class MonitorViewModel: ObservableObject {
             lastUpdatedText = Self.relativeTimestamp()
             errorMessage = nil
             noticeMessage = nil
+            await retryRemoteDeviceTokenRegistrationIfNeeded()
             notifyAttentionIfNeeded(from: fetchedSnapshots)
             return true
         } catch {
@@ -320,17 +322,35 @@ final class MonitorViewModel: ObservableObject {
     private func registerRemoteDeviceToken(_ deviceToken: String) async {
         remoteDeviceToken = deviceToken
         guard let client = makeClient() else { return }
+        let registrationKey = remoteDeviceRegistrationKey(for: deviceToken)
+        guard registeredRemoteDeviceKey != registrationKey else { return }
         do {
             try await client.registerDeviceToken(
                 deviceToken,
                 environment: DevicePushEnvironment.current
             )
+            registeredRemoteDeviceKey = registrationKey
             if noticeMessage?.hasPrefix("后台推送") == true {
                 noticeMessage = "后台推送已启用"
             }
         } catch {
+            registeredRemoteDeviceKey = nil
             noticeMessage = "后台推送 token 上传失败：\(Self.userFacingMessage(for: error))"
         }
+    }
+
+    private func retryRemoteDeviceTokenRegistrationIfNeeded() async {
+        guard let remoteDeviceToken else { return }
+        guard registeredRemoteDeviceKey != remoteDeviceRegistrationKey(for: remoteDeviceToken) else { return }
+        await registerRemoteDeviceToken(remoteDeviceToken)
+    }
+
+    private func remoteDeviceRegistrationKey(for deviceToken: String) -> String {
+        [
+            baseURLText.trimmingCharacters(in: .whitespacesAndNewlines),
+            DevicePushEnvironment.current.rawValue,
+            deviceToken
+        ].joined(separator: "|")
     }
 
     private func validationMessage() -> String {

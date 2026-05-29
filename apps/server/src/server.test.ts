@@ -16,6 +16,7 @@ describe("server", () => {
     delete process.env.REMOTE_COMMAND_CWD_ALLOWLIST;
     delete process.env.REMOTE_COMMAND_LEASE_MS;
     delete process.env.STALE_RUNNING_THREAD_MS;
+    delete process.env.PUSH_EVENT_MAX_AGE_MS;
   });
 
   it("serves health checks without auth", async () => {
@@ -29,7 +30,7 @@ describe("server", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ok: true, database: "ok" });
+    expect(response.json()).toEqual({ ok: true, database: "ok", push: "disabled" });
     await app.close();
   });
 
@@ -681,7 +682,7 @@ describe("server", () => {
     await app.close();
   });
 
-  it("pushes APNs notifications for approvals and failures only", async () => {
+  it("pushes APNs notifications for fresh replies, approvals, and failures only", async () => {
     process.env.RELAY_TOKEN = "relay-secret";
     process.env.MOBILE_TOKEN = "mobile-secret";
     const pushProvider = new CapturingPushProvider();
@@ -705,11 +706,26 @@ describe("server", () => {
         type: "thread.started",
         threadId: "thread-1",
         title: "Monitor",
-        at: "2026-05-26T10:00:00.000Z",
+        at: new Date().toISOString(),
         hostId: "mac-mini",
       },
     });
     expect(pushProvider.sent).toHaveLength(0);
+
+    await app.inject({
+      method: "POST",
+      url: "/relay/events",
+      headers: { authorization: "Bearer relay-secret" },
+      payload: {
+        type: "log.appended",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stream: "assistant",
+        text: "已经完成，可以在 iPhone 上查看结果。",
+        at: new Date().toISOString(),
+        hostId: "mac-mini",
+      },
+    });
 
     await app.inject({
       method: "POST",
@@ -721,7 +737,7 @@ describe("server", () => {
         turnId: "turn-1",
         approvalId: "approval-1",
         commandPreview: "echo hello",
-        at: "2026-05-26T10:00:01.000Z",
+        at: new Date().toISOString(),
         hostId: "mac-mini",
       },
     });
@@ -737,12 +753,22 @@ describe("server", () => {
         stepId: "step-1",
         label: "Run command",
         status: "failed",
-        at: "2026-05-26T10:00:02.000Z",
+        at: new Date().toISOString(),
         hostId: "mac-mini",
       },
     });
 
     expect(pushProvider.sent).toEqual([
+      {
+        deviceToken: "device-token-1",
+        environment: "sandbox",
+        notification: {
+          title: "Codex 回复",
+          body: "已经完成，可以在 iPhone 上查看结果。",
+          threadId: "thread-1",
+          category: "reply",
+        },
+      },
       {
         deviceToken: "device-token-1",
         environment: "sandbox",
@@ -764,6 +790,42 @@ describe("server", () => {
         },
       },
     ]);
+
+    await app.close();
+  });
+
+  it("does not push notifications for stale replayed assistant logs", async () => {
+    process.env.RELAY_TOKEN = "relay-secret";
+    process.env.MOBILE_TOKEN = "mobile-secret";
+    const pushProvider = new CapturingPushProvider();
+    const app = await buildServer({
+      databaseUrl: ":memory:",
+      pushProvider,
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/devices/register",
+      headers: { authorization: "Bearer mobile-secret" },
+      payload: { token: "device-token-1", environment: "sandbox" },
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/relay/events",
+      headers: { authorization: "Bearer relay-secret" },
+      payload: {
+        type: "log.appended",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stream: "assistant",
+        text: "这是历史回放里的旧回复。",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+    });
+
+    expect(pushProvider.sent).toEqual([]);
 
     await app.close();
   });

@@ -54,7 +54,11 @@ export async function buildServer(options: BuildOptions) {
 
   app.get("/health", async () => {
     store.healthCheck();
-    return { ok: true, database: "ok" };
+    return {
+      ok: true,
+      database: "ok",
+      push: pushProvider.configured === false ? "disabled" : "configured",
+    };
   });
 
   app.post("/relay/events", async (request, reply) => {
@@ -338,6 +342,7 @@ async function notifyDevices(
   pushProvider: PushProvider,
   event: CodexMonitorEvent,
 ): Promise<void> {
+  if (!isFreshPushEvent(event)) return;
   const notification = notificationForEvent(event);
   if (!notification) return;
 
@@ -354,10 +359,19 @@ async function notifyDevices(
 }
 
 function notificationForEvent(event: CodexMonitorEvent): PushNotification | undefined {
+  if (event.type === "log.appended" && event.stream === "assistant") {
+    return {
+      title: "Codex 回复",
+      body: notificationBody(event.text),
+      threadId: event.threadId,
+      category: "reply",
+    };
+  }
+
   if (event.type === "approval.requested") {
     return {
       title: "Codex 等待批准",
-      body: event.commandPreview,
+      body: notificationBody(event.commandPreview),
       threadId: event.threadId,
       category: "approval",
     };
@@ -366,7 +380,7 @@ function notificationForEvent(event: CodexMonitorEvent): PushNotification | unde
   if (event.type === "step.updated" && event.status === "failed") {
     return {
       title: "Codex 任务失败",
-      body: event.label,
+      body: notificationBody(event.label),
       threadId: event.threadId,
       category: "failure",
     };
@@ -375,11 +389,28 @@ function notificationForEvent(event: CodexMonitorEvent): PushNotification | unde
   if (event.type === "turn.completed" && event.outcome === "failed") {
     return {
       title: "Codex 任务失败",
-      body: event.summary,
+      body: notificationBody(event.summary),
       threadId: event.threadId,
       category: "failure",
     };
   }
 
   return undefined;
+}
+
+function isFreshPushEvent(event: CodexMonitorEvent): boolean {
+  const maxAgeMs = pushEventMaxAgeMs();
+  if (maxAgeMs <= 0) return true;
+  const eventMs = Date.parse(event.at);
+  return Number.isFinite(eventMs) && Date.now() - eventMs <= maxAgeMs;
+}
+
+function pushEventMaxAgeMs(): number {
+  const parsed = Number(process.env.PUSH_EVENT_MAX_AGE_MS);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 15 * 60_000;
+}
+
+function notificationBody(text: string): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  return trimmed.length > 180 ? `${trimmed.slice(0, 177)}...` : trimmed;
 }

@@ -8,7 +8,7 @@ export interface PushNotification {
   title: string;
   body: string;
   threadId: string;
-  category: "approval" | "failure";
+  category: "approval" | "failure" | "reply";
 }
 
 export interface PushProvider {
@@ -17,9 +17,12 @@ export interface PushProvider {
     environment: PushEnvironment,
     notification: PushNotification,
   ): Promise<void>;
+  readonly configured?: boolean;
 }
 
 export class NoopPushProvider implements PushProvider {
+  readonly configured = false;
+
   async send(): Promise<void> {
     return;
   }
@@ -46,6 +49,7 @@ export function createPushProviderFromEnv(env = process.env): PushProvider {
 }
 
 export class ApnsPushProvider implements PushProvider {
+  readonly configured = true;
   private readonly signingKey: ReturnType<typeof createPrivateKey>;
   private currentToken?: { value: string; issuedAt: number };
 
