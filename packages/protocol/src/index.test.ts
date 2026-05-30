@@ -429,4 +429,64 @@ describe("protocol", () => {
       { stepId: "step-1", label: "Run tests", status: "completed" },
     ]);
   });
+
+  it("marks a thread running when a live step starts before a turn start arrives", () => {
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId: "thread-1",
+        title: "Monitor",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "step.updated",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stepId: "step-1",
+        label: "exec_command: pnpm test",
+        status: "running",
+        at: "2026-05-26T10:01:00.000Z",
+        hostId: "mac-mini",
+      },
+    ];
+
+    expect(reduceSnapshot(events)).toMatchObject({
+      status: "running",
+      currentTurnId: "turn-1",
+    });
+  });
+
+  it("keeps a turn failed when a failed step is followed by a successful completion event", () => {
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId: "thread-1",
+        title: "Monitor",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "step.updated",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stepId: "step-1",
+        label: "exec_command: pnpm test",
+        status: "failed",
+        at: "2026-05-26T10:01:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        outcome: "success",
+        summary: "Codex handled the command failure",
+        at: "2026-05-26T10:02:00.000Z",
+        hostId: "mac-mini",
+      },
+    ];
+
+    expect(reduceSnapshot(events).status).toBe("failed");
+  });
 });

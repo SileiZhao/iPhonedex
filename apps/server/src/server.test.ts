@@ -412,6 +412,57 @@ describe("server", () => {
     await app.close();
   });
 
+  it("queues iPhone approval actions for the desktop bridge", async () => {
+    process.env.RELAY_TOKEN = "relay-secret";
+    process.env.MOBILE_TOKEN = "mobile-secret";
+    process.env.REMOTE_COMMANDS_ENABLED = "true";
+    process.env.REMOTE_COMMAND_HOST_ALLOWLIST = "mac-mini";
+    process.env.REMOTE_COMMAND_CWD_ALLOWLIST = "/repo";
+    const app = await buildServer({ databaseUrl: ":memory:" });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/approvals",
+      headers: { authorization: "Bearer mobile-secret" },
+      payload: {
+        hostId: "mac-mini",
+        threadId: "thread-1",
+        cwd: "/repo",
+        approvalId: "approval-1",
+        action: "approve",
+        commandPreview: "pnpm test",
+      },
+    });
+
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({ ok: true, commandId: expect.any(String) });
+
+    const pending = await app.inject({
+      method: "GET",
+      url: "/relay/commands?hostId=mac-mini",
+      headers: { authorization: "Bearer relay-secret" },
+    });
+
+    expect(pending.statusCode).toBe(200);
+    expect(pending.json()).toMatchObject([
+      {
+        id: created.json().commandId,
+        hostId: "mac-mini",
+        kind: "approval",
+        threadId: "thread-1",
+        cwd: "/repo",
+        approval: {
+          approvalId: "approval-1",
+          action: "approve",
+          commandPreview: "pnpm test",
+        },
+        status: "in_progress",
+      },
+    ]);
+
+    await app.close();
+  });
+
   it("rejects unsafe command queue payloads", async () => {
     process.env.RELAY_TOKEN = "relay-secret";
     process.env.MOBILE_TOKEN = "mobile-secret";
@@ -776,6 +827,9 @@ describe("server", () => {
           title: "Codex 等待批准",
           body: "echo hello",
           threadId: "thread-1",
+          hostId: "mac-mini",
+          approvalId: "approval-1",
+          commandPreview: "echo hello",
           category: "approval",
         },
       },

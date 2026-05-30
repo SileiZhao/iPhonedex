@@ -7,6 +7,7 @@ struct CodexMonitorApp: App {
     @UIApplicationDelegateAdaptor(MonitorAppDelegate.self) private var appDelegate
 
     init() {
+        MonitorNotificationService().configureNotificationCategories()
         UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
     }
 
@@ -46,7 +47,48 @@ final class ForegroundNotificationDelegate: NSObject, UNUserNotificationCenterDe
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .list]
+        []
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let action: ApprovalAction
+        switch response.actionIdentifier {
+        case MonitorNotificationService.approveActionIdentifier:
+            action = .approve
+        case MonitorNotificationService.rejectActionIdentifier:
+            action = .reject
+        default:
+            return
+        }
+
+        let userInfo = response.notification.request.content.userInfo
+        guard
+            let hostId = userInfo["hostId"] as? String,
+            let threadId = userInfo["threadId"] as? String,
+            let approvalId = userInfo["approvalId"] as? String
+        else {
+            return
+        }
+        let commandPreview = userInfo["commandPreview"] as? String ?? ""
+
+        do {
+            let configuration = try ConfigurationStore().load()
+            guard let url = URL(string: configuration.serverURL) else { return }
+            let client = MonitorClient(baseURL: url, token: configuration.mobileToken)
+            try await client.sendApprovalAction(
+                hostId: hostId,
+                threadId: threadId,
+                cwd: nil,
+                approvalId: approvalId,
+                action: action,
+                commandPreview: commandPreview
+            )
+        } catch {
+            return
+        }
     }
 }
 

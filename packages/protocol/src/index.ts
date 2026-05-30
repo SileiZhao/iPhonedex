@@ -214,7 +214,17 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
         status: event.status,
         turnId: event.turnId,
       });
-      if (event.status === "failed") status = "failed";
+      if (event.status === "failed") {
+        currentTurnId = event.turnId;
+        status = "failed";
+      } else if (
+        (event.status === "queued" || event.status === "running") &&
+        status !== "failed" &&
+        status !== "waiting_for_approval"
+      ) {
+        currentTurnId = event.turnId;
+        status = "running";
+      }
     }
     if (event.type === "log.appended") {
       logs.push({ stream: event.stream, text: event.text, at: event.at });
@@ -231,7 +241,6 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
     }
     if (event.type === "turn.completed") {
       currentTurnId = event.turnId;
-      status = event.outcome === "success" ? "completed" : "failed";
       pendingApproval = undefined;
       terminalTurnIds.add(event.turnId);
       for (const [stepId, step] of steps) {
@@ -242,6 +251,10 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
           });
         }
       }
+      const turnHasFailedStep = Array.from(steps.values()).some(
+        (step) => step.turnId === event.turnId && step.status === "failed",
+      );
+      status = event.outcome === "success" && !turnHasFailedStep ? "completed" : "failed";
     }
   }
 

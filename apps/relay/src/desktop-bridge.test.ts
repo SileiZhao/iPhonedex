@@ -12,6 +12,7 @@ import {
   parseToolCallLog,
   recentThreads,
   refreshCodexDesktopThread,
+  runCodexApprovalAction,
   type CodexLogRow,
   type CodexThreadRow,
 } from "./desktop-bridge.js";
@@ -228,6 +229,41 @@ describe("desktop bridge log parsing", () => {
     ]);
   });
 
+  test("builds a Codex.app approval click command for approve actions", () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+
+    const result = runCodexApprovalAction(
+      {
+        id: "approval-command-1",
+        hostId: "macbook",
+        kind: "approval",
+        threadId: "thread-1",
+        prompt: "Approve pending Codex desktop request",
+        approval: {
+          approvalId: "approval-1",
+          action: "approve",
+          commandPreview: "pnpm test",
+        },
+        status: "in_progress",
+      },
+      {
+        platform: "darwin",
+        spawn: (command, args) => {
+          calls.push({ command, args });
+          return { status: 0, error: undefined };
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([
+      {
+        command: "osascript",
+        args: expect.arrayContaining(["codex://threads/thread-1", "approve"]),
+      },
+    ]);
+  });
+
   test("lists only top-level user threads from Codex desktop state", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-monitor-state-"));
     const dbPath = join(dir, "state.sqlite");
@@ -425,6 +461,46 @@ describe("desktop bridge log parsing", () => {
         hostId: "macbook",
       },
     ]);
+  });
+
+  test("marks rollout function call output with non-zero exit code as failed", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:15.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:16.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          arguments: "{\"cmd\":\"pnpm test\"}",
+          call_id: "call-1",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:17.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-1",
+          output: "Process exited with code 1\nOutput:\nTest failed",
+        },
+      }),
+    ].join("\n");
+
+    expect(parseRolloutEvents(content, "thread-1", "macbook")).toContainEqual({
+      type: "step.updated",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      stepId: "codex-call-call-1",
+      label: "exec_command: pnpm test",
+      status: "failed",
+      at: "2026-05-27T08:53:17.000Z",
+      hostId: "macbook",
+    });
   });
 
   test("reads rollout files incrementally after a bounded bootstrap tail", () => {

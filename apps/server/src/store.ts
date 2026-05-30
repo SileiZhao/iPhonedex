@@ -11,9 +11,15 @@ import type { PushEnvironment } from "./apns.js";
 export interface RemoteCommandRecord {
   id: string;
   hostId: string;
+  kind: "prompt" | "approval";
   threadId?: string;
   cwd?: string;
   prompt: string;
+  approval?: {
+    approvalId: string;
+    action: "approve" | "reject";
+    commandPreview?: string;
+  };
   status: "queued" | "in_progress" | "completed" | "failed";
   attempts: number;
   claimedAt?: string;
@@ -68,6 +74,10 @@ export class EventStore {
         thread_id TEXT,
         cwd TEXT,
         prompt TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'prompt',
+        approval_id TEXT,
+        approval_action TEXT,
+        approval_command_preview TEXT,
         status TEXT NOT NULL,
         summary TEXT,
         claimed_at TEXT,
@@ -88,6 +98,10 @@ export class EventStore {
     this.ensureRemoteCommandColumn("claimed_at", "TEXT");
     this.ensureRemoteCommandColumn("lease_expires_at", "TEXT");
     this.ensureRemoteCommandColumn("attempts", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureRemoteCommandColumn("kind", "TEXT NOT NULL DEFAULT 'prompt'");
+    this.ensureRemoteCommandColumn("approval_id", "TEXT");
+    this.ensureRemoteCommandColumn("approval_action", "TEXT");
+    this.ensureRemoteCommandColumn("approval_command_preview", "TEXT");
   }
 
   insert(event: CodexMonitorEvent): void {
@@ -264,8 +278,8 @@ export class EventStore {
       .prepare(
         `
         INSERT INTO remote_commands
-          (id, host_id, thread_id, cwd, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+          (id, host_id, thread_id, cwd, prompt, kind, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'prompt', 'queued', ?, ?)
       `,
       )
       .run(
@@ -279,6 +293,43 @@ export class EventStore {
       );
   }
 
+  enqueueApprovalAction(command: {
+    id: string;
+    hostId: string;
+    threadId: string;
+    cwd?: string;
+    approvalId: string;
+    action: "approve" | "reject";
+    commandPreview?: string;
+    at: string;
+  }): void {
+    const prompt =
+      command.action === "approve"
+        ? "Approve pending Codex desktop request"
+        : "Reject pending Codex desktop request";
+    this.db
+      .prepare(
+        `
+        INSERT INTO remote_commands
+          (id, host_id, thread_id, cwd, prompt, kind, approval_id, approval_action,
+            approval_command_preview, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'approval', ?, ?, ?, 'queued', ?, ?)
+      `,
+      )
+      .run(
+        command.id,
+        command.hostId,
+        command.threadId,
+        command.cwd ?? null,
+        prompt,
+        command.approvalId,
+        command.action,
+        command.commandPreview ?? null,
+        command.at,
+        command.at,
+      );
+  }
+
   claimQueuedCommands(hostId: string, limit = 5, leaseMs = 5 * 60_000): RemoteCommandRecord[] {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -286,8 +337,9 @@ export class EventStore {
     const claimable = this.db
       .prepare(
         `
-        SELECT id, host_id, thread_id, cwd, prompt, status, claimed_at, lease_expires_at,
-          attempts, created_at, updated_at
+        SELECT id, host_id, thread_id, cwd, prompt, kind, approval_id, approval_action,
+          approval_command_preview, status, claimed_at, lease_expires_at, attempts, created_at,
+          updated_at
         FROM remote_commands
         WHERE host_id = ?
           AND (
@@ -317,8 +369,9 @@ export class EventStore {
     );
     const read = this.db.prepare(
       `
-      SELECT id, host_id, thread_id, cwd, prompt, status, claimed_at, lease_expires_at,
-        attempts, created_at, updated_at
+      SELECT id, host_id, thread_id, cwd, prompt, kind, approval_id, approval_action,
+        approval_command_preview, status, claimed_at, lease_expires_at, attempts, created_at,
+        updated_at
       FROM remote_commands
       WHERE id = ?
     `,
@@ -442,6 +495,10 @@ interface CommandRow {
       thread_id: string | null;
       cwd: string | null;
       prompt: string;
+      kind: string;
+      approval_id: string | null;
+      approval_action: string | null;
+      approval_command_preview: string | null;
       status: RemoteCommandRecord["status"];
       claimed_at: string | null;
       lease_expires_at: string | null;
@@ -451,12 +508,26 @@ interface CommandRow {
 }
 
 function commandRowToRecord(row: CommandRow): RemoteCommandRecord {
+  const kind = row.kind === "approval" ? "approval" : "prompt";
+  const approvalAction =
+    row.approval_action === "approve" || row.approval_action === "reject"
+      ? row.approval_action
+      : undefined;
   return {
     id: row.id,
     hostId: row.host_id,
+    kind,
     threadId: row.thread_id ?? undefined,
     cwd: row.cwd ?? undefined,
     prompt: row.prompt,
+    approval:
+      kind === "approval" && row.approval_id && approvalAction
+        ? {
+            approvalId: row.approval_id,
+            action: approvalAction,
+            commandPreview: row.approval_command_preview ?? undefined,
+          }
+        : undefined,
     status: row.status,
     attempts: row.attempts,
     claimedAt: row.claimed_at ?? undefined,

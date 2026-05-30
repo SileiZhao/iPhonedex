@@ -3,6 +3,30 @@ import UIKit
 import UserNotifications
 
 final class MonitorNotificationService {
+    static let approvalCategoryIdentifier = "approval"
+    static let approveActionIdentifier = "APPROVE_CODEX_APPROVAL"
+    static let rejectActionIdentifier = "REJECT_CODEX_APPROVAL"
+
+    func configureNotificationCategories() {
+        let approve = UNNotificationAction(
+            identifier: Self.approveActionIdentifier,
+            title: "批准",
+            options: [.authenticationRequired]
+        )
+        let reject = UNNotificationAction(
+            identifier: Self.rejectActionIdentifier,
+            title: "拒绝",
+            options: [.authenticationRequired, .destructive]
+        )
+        let approval = UNNotificationCategory(
+            identifier: Self.approvalCategoryIdentifier,
+            actions: [approve, reject],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([approval])
+    }
+
     @MainActor
     func requestRemoteNotificationRegistration() async -> Bool {
         guard await requestAuthorizationIfNeeded() else { return false }

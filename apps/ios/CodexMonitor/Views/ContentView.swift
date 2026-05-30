@@ -16,6 +16,7 @@ final class MonitorViewModel: ObservableObject {
     @Published var selectedFilter: ThreadFilter = .all
     @Published var showingSettings = false
     @Published var sendingCommand = false
+    @Published var sendingApprovalAction: ApprovalAction?
 
     private let store = ConfigurationStore()
     private let notifier = MonitorNotificationService()
@@ -222,7 +223,6 @@ final class MonitorViewModel: ObservableObject {
                 receiveTask = nil
                 connected = false
                 connecting = true
-                errorMessage = Self.webSocketDisconnectedMessage
                 noticeMessage = nil
                 try? await Task.sleep(for: .seconds(3))
                 if !Task.isCancelled {
@@ -261,6 +261,37 @@ final class MonitorViewModel: ObservableObject {
             return true
         } catch {
             sendingCommand = false
+            errorMessage = Self.userFacingMessage(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func sendApprovalAction(to snapshot: ThreadSnapshot, action: ApprovalAction) async -> Bool {
+        guard let approval = snapshot.pendingApproval else { return false }
+        guard let client = makeClient() else {
+            errorMessage = validationMessage()
+            return false
+        }
+
+        sendingApprovalAction = action
+        errorMessage = nil
+        noticeMessage = nil
+        do {
+            try await client.sendApprovalAction(
+                hostId: snapshot.hostId,
+                threadId: snapshot.threadId,
+                cwd: snapshot.cwd,
+                approvalId: approval.approvalId,
+                action: action,
+                commandPreview: approval.commandPreview
+            )
+            sendingApprovalAction = nil
+            noticeMessage = action == .approve ? "已请求 Mac 批准" : "已请求 Mac 拒绝"
+            _ = await refresh()
+            return true
+        } catch {
+            sendingApprovalAction = nil
             errorMessage = Self.userFacingMessage(for: error)
             return false
         }
@@ -411,6 +442,7 @@ final class MonitorViewModel: ObservableObject {
     }
 
     private func notifyAttentionIfNeeded(from snapshots: [ThreadSnapshot]) {
+        guard !Self.isAppActive else { return }
         for snapshot in snapshots where snapshot.status == .waitingForApproval || snapshot.status == .failed {
             let key = "\(snapshot.threadId)-\(snapshot.status.rawValue)-\(snapshot.lastEventAt)"
             guard !notifiedSnapshotKeys.contains(key) else { continue }
@@ -420,6 +452,14 @@ final class MonitorViewModel: ObservableObject {
                 await notifier.notifyAttention(snapshot: snapshot)
             }
         }
+    }
+
+    private static var isAppActive: Bool {
+        #if canImport(UIKit)
+        UIApplication.shared.applicationState == .active
+        #else
+        false
+        #endif
     }
 
     private static func relativeTimestamp() -> String {
@@ -1347,12 +1387,18 @@ private struct ThreadDetailView: View {
                     text: $commandText,
                     isFocused: $composerFocused,
                     sending: viewModel.sendingCommand,
+                    approvalActionInFlight: viewModel.sendingApprovalAction,
                     canCopyLogs: !snapshot.recentLogs.isEmpty,
-                    hasApprovalCommand: snapshot.pendingApproval != nil,
+                    pendingApproval: snapshot.pendingApproval,
                     copyableLogs: snapshot.copyableLogText,
                     approvalCommand: snapshot.pendingApproval?.commandPreview ?? "",
                     showDebugLogs: { showingDebugLogs = true },
                     refresh: { Task { await viewModel.refresh() } },
+                    actOnApproval: { action in
+                        Task {
+                            await viewModel.sendApprovalAction(to: snapshot, action: action)
+                        }
+                    },
                     send: {
                         let prompt = commandText
                         Task {
@@ -1506,20 +1552,110 @@ private struct RuntimeMetric: View {
     }
 }
 
+private struct ApprovalActionBar: View {
+    let pendingApproval: PendingApproval
+    let inFlightAction: ApprovalAction?
+    let approve: () -> Void
+    let reject: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(CodexTheme.warning)
+                    .frame(width: 22, height: 22)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mac Codex 等待批准")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(CodexTheme.primaryText)
+                    Text(pendingApproval.commandPreview)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(CodexTheme.secondaryText)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: approve) {
+                    ApprovalActionLabel(
+                        title: "批准",
+                        systemImage: "checkmark",
+                        loading: inFlightAction == .approve
+                    )
+                }
+                .buttonStyle(ApprovalDecisionButtonStyle(tint: CodexTheme.success, foreground: .white))
+                .disabled(inFlightAction != nil)
+
+                Button(action: reject) {
+                    ApprovalActionLabel(
+                        title: "拒绝",
+                        systemImage: "xmark",
+                        loading: inFlightAction == .reject
+                    )
+                }
+                .buttonStyle(ApprovalDecisionButtonStyle(tint: CodexTheme.danger, foreground: .white))
+                .disabled(inFlightAction != nil)
+            }
+        }
+        .padding(12)
+        .background(CodexTheme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(CodexTheme.warning.opacity(0.35), lineWidth: 1)
+        )
+    }
+}
+
+private struct ApprovalActionLabel: View {
+    let title: String
+    let systemImage: String
+    let loading: Bool
+
+    var body: some View {
+        HStack(spacing: 7) {
+            if loading {
+                ProgressView()
+                    .tint(.white)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .bold))
+            }
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 38)
+    }
+}
+
 private struct CodexComposerBar: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     let sending: Bool
+    let approvalActionInFlight: ApprovalAction?
     let canCopyLogs: Bool
-    let hasApprovalCommand: Bool
+    let pendingApproval: PendingApproval?
     let copyableLogs: String
     let approvalCommand: String
     let showDebugLogs: () -> Void
     let refresh: () -> Void
+    let actOnApproval: (ApprovalAction) -> Void
     let send: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
+            if let pendingApproval {
+                ApprovalActionBar(
+                    pendingApproval: pendingApproval,
+                    inFlightAction: approvalActionInFlight,
+                    approve: { actOnApproval(.approve) },
+                    reject: { actOnApproval(.reject) }
+                )
+            }
+
             HStack(spacing: 8) {
                 Button(action: refresh) {
                     Label("刷新", systemImage: "arrow.clockwise")
@@ -1540,7 +1676,7 @@ private struct CodexComposerBar: View {
 
                 CopyButton(text: approvalCommand, label: "命令")
                     .buttonStyle(CompactPillButtonStyle(tint: CodexTheme.warning))
-                    .disabled(!hasApprovalCommand)
+                    .disabled(pendingApproval == nil)
             }
 
             HStack(alignment: .bottom, spacing: 12) {
@@ -2354,6 +2490,18 @@ private struct CodexSecondaryButtonStyle: ButtonStyle {
                     .stroke(CodexTheme.border, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
+
+private struct ApprovalDecisionButtonStyle: ButtonStyle {
+    var tint: Color
+    var foreground: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(foreground)
+            .background(tint, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 

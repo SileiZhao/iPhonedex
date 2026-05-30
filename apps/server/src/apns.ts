@@ -9,6 +9,9 @@ export interface PushNotification {
   body: string;
   threadId: string;
   category: "approval" | "failure" | "reply";
+  hostId?: string;
+  approvalId?: string;
+  commandPreview?: string;
 }
 
 export interface PushProvider {
@@ -92,6 +95,9 @@ export class ApnsPushProvider implements PushProvider {
       },
       threadId: notification.threadId,
       category: notification.category,
+      hostId: notification.hostId,
+      approvalId: notification.approvalId,
+      commandPreview: notification.commandPreview,
     });
 
     await new Promise<void>((resolve, reject) => {

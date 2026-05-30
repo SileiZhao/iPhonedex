@@ -12,7 +12,7 @@ services:
       DATABASE_URL: /data/events.sqlite
       RELAY_TOKEN: ${RELAY_TOKEN}
       MOBILE_TOKEN: ${MOBILE_TOKEN}
-      APNS_KEY_PATH: /secrets/AuthKey_7A6JSJF8VP.p8
+      APNS_KEY_PATH: /secrets/AuthKey_<apns-key-id>.p8
       APNS_KEY_ID: ${APNS_KEY_ID}
       APNS_TEAM_ID: ${APNS_TEAM_ID}
       APNS_TOPIC: ${APNS_TOPIC}

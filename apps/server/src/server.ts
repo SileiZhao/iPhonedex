@@ -166,6 +166,70 @@ export async function buildServer(options: BuildOptions) {
     return reply.code(202).send({ ok: true, commandId });
   });
 
+  app.post("/api/approvals", async (request, reply) => {
+    requireBearer(request, getRequiredEnv("MOBILE_TOKEN"));
+    const body = request.body;
+    if (!isApprovalActionRequest(body)) {
+      return reply.code(400).send({ error: "Invalid approval action request" });
+    }
+    if (!remoteCommandsEnabled()) {
+      return reply.code(403).send({ error: "Remote commands are disabled" });
+    }
+
+    const at = new Date().toISOString();
+    const commandId = randomUUID();
+    const command = {
+      id: commandId,
+      hostId: body.hostId.trim(),
+      threadId: body.threadId.trim(),
+      cwd: optionalTrimmed(body.cwd),
+      approvalId: body.approvalId.trim(),
+      action: body.action,
+      commandPreview: optionalTrimmed(body.commandPreview)?.slice(0, 1000),
+      at,
+    };
+    if (!allowedValue("REMOTE_COMMAND_HOST_ALLOWLIST", command.hostId)) {
+      return reply.code(403).send({ error: "Host is not allowed for remote commands" });
+    }
+    if (command.cwd && !allowedPath("REMOTE_COMMAND_CWD_ALLOWLIST", command.cwd)) {
+      return reply.code(403).send({ error: "Working directory is not allowed" });
+    }
+    store.enqueueApprovalAction(command);
+
+    const label = command.action === "approve" ? "Approve from iPhone" : "Reject from iPhone";
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "log.appended",
+        threadId: command.threadId,
+        turnId: commandId,
+        stream: "user",
+        text:
+          command.action === "approve"
+            ? "iPhone requested approval for the pending Codex action."
+            : "iPhone rejected the pending Codex action.",
+        at,
+        hostId: command.hostId,
+      },
+      {
+        type: "step.updated",
+        threadId: command.threadId,
+        turnId: commandId,
+        stepId: `approval-action-${commandId}`,
+        label,
+        status: "queued",
+        at,
+        hostId: command.hostId,
+      },
+    ];
+    for (const event of events) {
+      const redacted = redactEvent(event);
+      store.insert(redacted);
+      broadcastEvent(mobileClients, redacted);
+    }
+
+    return reply.code(202).send({ ok: true, commandId });
+  });
+
   app.get("/relay/commands", async (request, reply) => {
     requireBearer(request, getRequiredEnv("RELAY_TOKEN"));
     if (!remoteCommandsEnabled()) {
@@ -283,6 +347,32 @@ function isCommandRequest(value: unknown): value is {
   );
 }
 
+function isApprovalActionRequest(value: unknown): value is {
+  hostId: string;
+  threadId: string;
+  cwd?: string;
+  approvalId: string;
+  action: "approve" | "reject";
+  commandPreview?: string;
+} {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.hostId === "string" &&
+    candidate.hostId.trim().length > 0 &&
+    candidate.hostId.length <= 200 &&
+    typeof candidate.threadId === "string" &&
+    candidate.threadId.trim().length > 0 &&
+    candidate.threadId.length <= 200 &&
+    typeof candidate.approvalId === "string" &&
+    candidate.approvalId.trim().length > 0 &&
+    candidate.approvalId.length <= 200 &&
+    (candidate.action === "approve" || candidate.action === "reject") &&
+    optionalString(candidate.cwd, 2000) &&
+    optionalString(candidate.commandPreview, 1000)
+  );
+}
+
 function isCommandCompletion(value: unknown): value is {
   status: "completed" | "failed";
   summary?: string;
@@ -373,6 +463,9 @@ function notificationForEvent(event: CodexMonitorEvent): PushNotification | unde
       title: "Codex 等待批准",
       body: notificationBody(event.commandPreview),
       threadId: event.threadId,
+      hostId: event.hostId,
+      approvalId: event.approvalId,
+      commandPreview: notificationBody(event.commandPreview),
       category: "approval",
     };
   }

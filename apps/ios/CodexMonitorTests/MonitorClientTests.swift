@@ -87,6 +87,35 @@ final class MonitorClientTests: XCTestCase {
         XCTAssertEqual(payload["prompt"], "继续执行")
     }
 
+    func testBuildsApprovalActionRequest() throws {
+        let client = MonitorClient(
+            baseURL: URL(string: "https://monitor.example.com/codex-monitor")!,
+            token: "mobile-secret"
+        )
+
+        let request = try client.makeApprovalActionRequest(
+            hostId: "macbook",
+            threadId: "thread-1",
+            cwd: "/Users/example/Repo",
+            approvalId: "approval-1",
+            action: .approve,
+            commandPreview: "pnpm test"
+        )
+
+        XCTAssertEqual(request.url?.absoluteString, "https://monitor.example.com/codex-monitor/api/approvals")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mobile-secret")
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String]
+        )
+        XCTAssertEqual(payload["hostId"], "macbook")
+        XCTAssertEqual(payload["threadId"], "thread-1")
+        XCTAssertEqual(payload["cwd"], "/Users/example/Repo")
+        XCTAssertEqual(payload["approvalId"], "approval-1")
+        XCTAssertEqual(payload["action"], "approve")
+        XCTAssertEqual(payload["commandPreview"], "pnpm test")
+    }
+
     func testExplainsRemoteCommandForbiddenSeparatelyFromTokenFailures() throws {
         XCTAssertEqual(
             MonitorClientError.remoteCommandForbidden.localizedDescription,

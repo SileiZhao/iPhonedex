@@ -32,12 +32,18 @@ export interface BridgeState {
   rolloutOffsets: Record<string, number>;
 }
 
-interface RemoteCommand {
+export interface RemoteCommand {
   id: string;
   hostId: string;
+  kind?: "prompt" | "approval";
   threadId?: string;
   cwd?: string;
   prompt: string;
+  approval?: {
+    approvalId: string;
+    action: "approve" | "reject";
+    commandPreview?: string;
+  };
   status: "queued" | "in_progress" | "completed" | "failed";
 }
 
@@ -300,7 +306,7 @@ export function parseRolloutEvents(
             turnId: toolCall.turnId,
             stepId: `codex-call-${callId}`,
             label: toolCall.label,
-            status: "completed",
+            status: functionCallOutputFailed(output) ? "failed" : "completed",
             at,
             hostId,
           });
@@ -350,6 +356,13 @@ export function parseToolCallLog(row: CodexLogRow, hostId: string): CodexMonitor
       hostId,
     },
   ];
+}
+
+function functionCallOutputFailed(output: string): boolean {
+  const exitCode = output.match(/(?:Process exited with code|Exit status:)\s*(-?\d+)/i);
+  if (exitCode?.[1] && Number(exitCode[1]) !== 0) return true;
+  return /\b(error|failed|exception|traceback)\b/i.test(output) &&
+    !/\b0 failures?\b/i.test(output);
 }
 
 export function parseTurnCompletedLog(row: CodexLogRow, hostId: string): CodexMonitorEvent[] {
@@ -493,7 +506,10 @@ async function runRemoteCommand(command: RemoteCommand, hostId: string): Promise
     hostId,
   });
 
-  const result = await executeCodexCommand(command);
+  const result =
+    command.kind === "approval"
+      ? runCodexApprovalAction(command)
+      : await executeCodexCommand(command);
   if (result.output) {
     await upload({
       type: "log.appended",
@@ -594,6 +610,118 @@ function allowedCommandCwd(cwd: string): boolean {
 interface DesktopRefreshOptions {
   platform?: NodeJS.Platform;
   spawn?: (command: string, args: string[]) => { status: number | null; error?: Error };
+}
+
+interface DesktopApprovalOptions {
+  platform?: NodeJS.Platform;
+  spawn?: (command: string, args: string[]) => { status: number | null; error?: Error };
+}
+
+export function runCodexApprovalAction(
+  command: RemoteCommand,
+  options: DesktopApprovalOptions = {},
+): { ok: boolean; output: string } {
+  if ((options.platform ?? process.platform) !== "darwin") {
+    return { ok: false, output: "Approval actions are only supported on macOS." };
+  }
+  if (!command.threadId) {
+    return { ok: false, output: "Approval action is missing a target thread." };
+  }
+  const action = command.approval?.action;
+  if (action !== "approve" && action !== "reject") {
+    return { ok: false, output: "Approval action must be approve or reject." };
+  }
+
+  const labels = action === "approve" ? approvalButtonLabels() : rejectionButtonLabels();
+  const targetUrl = `codex://threads/${command.threadId}`;
+  const script = `
+on run argv
+  set bundleId to item 1 of argv
+  set appPath to item 2 of argv
+  set targetUrl to item 3 of argv
+  set actionName to item 4 of argv
+  set processName to item 5 of argv
+  set buttonNames to my splitText(item 6 of argv, "||")
+  my openCodexUrl(bundleId, appPath, targetUrl)
+  delay 0.35
+  tell application "System Events"
+    repeat with attempt from 1 to 20
+      try
+        tell process processName
+          set frontmost to true
+          repeat with buttonName in buttonNames
+            set matches to (buttons of entire contents of window 1 whose name is (buttonName as text))
+            if (count of matches) > 0 then
+              click item 1 of matches
+              return "clicked " & buttonName
+            end if
+          end repeat
+        end tell
+      end try
+      delay 0.2
+    end repeat
+  end tell
+  error "Could not find " & actionName & " button in Codex. Grant Accessibility permission to the desktop bridge and keep the approval dialog visible."
+end run
+on openCodexUrl(bundleId, appPath, targetUrl)
+  try
+    do shell script "open -b " & quoted form of bundleId & " " & quoted form of targetUrl
+  on error
+    do shell script "open -a " & quoted form of appPath & " " & quoted form of targetUrl
+  end try
+end openCodexUrl
+on splitText(theText, delimiter)
+  set previousDelimiters to AppleScript's text item delimiters
+  set AppleScript's text item delimiters to delimiter
+  set parts to text items of theText
+  set AppleScript's text item delimiters to previousDelimiters
+  return parts
+end splitText
+`;
+  const spawn = options.spawn ?? ((commandName, args) => spawnSync(commandName, args));
+  const result = spawn("osascript", [
+    "-e",
+    script,
+    process.env.DESKTOP_BRIDGE_CODEX_BUNDLE_ID ?? "com.openai.codex",
+    process.env.DESKTOP_BRIDGE_CODEX_APP_PATH ?? "/Applications/Codex.app",
+    targetUrl,
+    action,
+    process.env.DESKTOP_BRIDGE_CODEX_PROCESS_NAME ?? "Codex",
+    labels.join("||"),
+  ]);
+  if (result.error) {
+    return { ok: false, output: result.error.message };
+  }
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      output:
+        "Could not click the Codex approval button. Grant Accessibility permission to the desktop bridge and keep the approval dialog visible.",
+    };
+  }
+  return {
+    ok: true,
+    output:
+      action === "approve"
+        ? "Approved the pending Codex request from iPhone."
+        : "Rejected the pending Codex request from iPhone.",
+  };
+}
+
+function approvalButtonLabels(): string[] {
+  return (process.env.DESKTOP_BRIDGE_APPROVE_BUTTON_LABELS ?? "")
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .concat(["Approve", "Allow", "Run command", "Continue", "批准", "允许", "运行", "继续"]);
+}
+
+function rejectionButtonLabels(): string[] {
+  return (process.env.DESKTOP_BRIDGE_REJECT_BUTTON_LABELS ?? "")
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .concat(["Reject", "Deny", "Cancel", "拒绝", "取消"]);
 }
 
 export function refreshCodexDesktopThread(
@@ -839,11 +967,18 @@ function parseJsonObject(text: string): Record<string, unknown> {
 
 function isRemoteCommand(value: unknown): value is RemoteCommand {
   const candidate = objectValue(value);
+  const kind = candidate?.kind ?? "prompt";
+  const approval = objectValue(candidate?.approval);
   return Boolean(
     candidate &&
       typeof candidate.id === "string" &&
       typeof candidate.hostId === "string" &&
       typeof candidate.prompt === "string" &&
+      (kind === "prompt" || kind === "approval") &&
+      (kind !== "approval" ||
+        (approval &&
+          typeof approval.approvalId === "string" &&
+          (approval.action === "approve" || approval.action === "reject"))) &&
       (candidate.status === "queued" || candidate.status === "in_progress") &&
       (candidate.threadId === undefined || typeof candidate.threadId === "string") &&
       (candidate.cwd === undefined || typeof candidate.cwd === "string"),

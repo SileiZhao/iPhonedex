@@ -32,6 +32,11 @@ enum DevicePushEnvironment: String, Codable {
     }
 }
 
+enum ApprovalAction: String, Codable {
+    case approve
+    case reject
+}
+
 final class MonitorClient {
     private let baseURL: URL
     private let token: String
@@ -88,6 +93,30 @@ final class MonitorClient {
         return request
     }
 
+    func makeApprovalActionRequest(
+        hostId: String,
+        threadId: String,
+        cwd: String?,
+        approvalId: String,
+        action: ApprovalAction,
+        commandPreview: String
+    ) throws -> URLRequest {
+        var request = makeRequest(path: "/api/approvals")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            ApprovalActionPayload(
+                hostId: hostId,
+                threadId: threadId,
+                cwd: cwd,
+                approvalId: approvalId,
+                action: action.rawValue,
+                commandPreview: commandPreview
+            )
+        )
+        return request
+    }
+
     func fetchThreads() async throws -> [ThreadSnapshot] {
         let request = makeRequest(path: "/api/threads")
         let (data, response) = try await session.data(for: request)
@@ -134,6 +163,34 @@ final class MonitorClient {
         }
     }
 
+    func sendApprovalAction(
+        hostId: String,
+        threadId: String,
+        cwd: String?,
+        approvalId: String,
+        action: ApprovalAction,
+        commandPreview: String
+    ) async throws {
+        let request = try makeApprovalActionRequest(
+            hostId: hostId,
+            threadId: threadId,
+            cwd: cwd,
+            approvalId: approvalId,
+            action: action,
+            commandPreview: commandPreview
+        )
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MonitorClientError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 403 {
+                throw MonitorClientError.remoteCommandForbidden
+            }
+            throw MonitorClientError.httpStatus(http.statusCode)
+        }
+    }
+
     func testConnection() async throws {
         _ = try await fetchThreads()
     }
@@ -149,4 +206,13 @@ private struct RemoteCommandPayload: Encodable {
     let threadId: String?
     let cwd: String?
     let prompt: String
+}
+
+private struct ApprovalActionPayload: Encodable {
+    let hostId: String
+    let threadId: String
+    let cwd: String?
+    let approvalId: String
+    let action: String
+    let commandPreview: String
 }
