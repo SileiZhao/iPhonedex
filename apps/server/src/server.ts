@@ -470,15 +470,6 @@ function notificationForEvent(event: CodexMonitorEvent): PushNotification | unde
     };
   }
 
-  if (event.type === "step.updated" && event.status === "failed") {
-    return {
-      title: "Codex 任务失败",
-      body: notificationBody(event.label),
-      threadId: event.threadId,
-      category: "failure",
-    };
-  }
-
   if (event.type === "turn.completed" && event.outcome === "failed") {
     return {
       title: "Codex 任务失败",

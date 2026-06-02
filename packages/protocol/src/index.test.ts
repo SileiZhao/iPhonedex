@@ -187,6 +187,42 @@ describe("protocol", () => {
     expect(reduceSnapshot(events).pendingApproval).toBeUndefined();
   });
 
+  it("clears pending approval when the matching tool step finishes", () => {
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId: "thread-1",
+        title: "iPhone monitor",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "approval.requested",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "call-1",
+        commandPreview: "pnpm build",
+        at: "2026-05-26T10:02:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "step.updated",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stepId: "codex-call-call-1",
+        label: "exec_command: pnpm build",
+        status: "completed",
+        at: "2026-05-26T10:03:00.000Z",
+        hostId: "mac-mini",
+      },
+    ];
+
+    expect(reduceSnapshot(events)).toMatchObject({
+      status: "running",
+      pendingApproval: undefined,
+    });
+  });
+
   it("does not let a later desktop pulse reopen a completed turn", () => {
     const events: CodexMonitorEvent[] = [
       {
@@ -457,7 +493,34 @@ describe("protocol", () => {
     });
   });
 
-  it("keeps a turn failed when a failed step is followed by a successful completion event", () => {
+  it("does not mark a thread running from a completed historical step alone", () => {
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId: "thread-1",
+        title: "Monitor",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "step.updated",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        stepId: "step-1",
+        label: "Old command",
+        status: "completed",
+        at: "2026-05-26T10:01:00.000Z",
+        hostId: "mac-mini",
+      },
+    ];
+
+    expect(reduceSnapshot(events)).toMatchObject({
+      status: "idle",
+      currentTurnId: undefined,
+    });
+  });
+
+  it("keeps command failures separate from successful Codex turns", () => {
     const events: CodexMonitorEvent[] = [
       {
         type: "thread.started",
@@ -487,6 +550,40 @@ describe("protocol", () => {
       },
     ];
 
-    expect(reduceSnapshot(events).status).toBe("failed");
+    expect(reduceSnapshot(events).status).toBe("completed");
+  });
+
+  it("marks Codex turn failures as failed", () => {
+    const events: CodexMonitorEvent[] = [
+      {
+        type: "thread.started",
+        threadId: "thread-1",
+        title: "Monitor",
+        at: "2026-05-26T10:00:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "turn.started",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        promptPreview: "继续执行",
+        at: "2026-05-26T10:01:00.000Z",
+        hostId: "mac-mini",
+      },
+      {
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        outcome: "failed",
+        summary: "429 rate limit",
+        at: "2026-05-26T10:02:00.000Z",
+        hostId: "mac-mini",
+      },
+    ];
+
+    expect(reduceSnapshot(events)).toMatchObject({
+      status: "failed",
+      currentTurnId: "turn-1",
+    });
   });
 });

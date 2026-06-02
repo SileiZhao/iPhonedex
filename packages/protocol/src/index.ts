@@ -214,13 +214,18 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
         status: event.status,
         turnId: event.turnId,
       });
-      if (event.status === "failed") {
-        currentTurnId = event.turnId;
-        status = "failed";
-      } else if (
-        (event.status === "queued" || event.status === "running") &&
-        status !== "failed" &&
-        status !== "waiting_for_approval"
+      const clearedPendingApproval =
+        pendingApproval && approvalMatchesStep(pendingApproval.approvalId, event.stepId);
+      if (clearedPendingApproval) {
+        pendingApproval = undefined;
+      }
+      if (terminalTurnIds.has(event.turnId)) {
+        continue;
+      }
+      if (
+        event.status === "queued" ||
+        event.status === "running" ||
+        Boolean(clearedPendingApproval)
       ) {
         currentTurnId = event.turnId;
         status = "running";
@@ -251,10 +256,7 @@ export function reduceSnapshot(events: CodexMonitorEvent[]): ThreadSnapshot {
           });
         }
       }
-      const turnHasFailedStep = Array.from(steps.values()).some(
-        (step) => step.turnId === event.turnId && step.status === "failed",
-      );
-      status = event.outcome === "success" && !turnHasFailedStep ? "completed" : "failed";
+      status = event.outcome === "success" ? "completed" : "failed";
     }
   }
 
@@ -281,4 +283,8 @@ function snapshotRecentLogLimit(): number {
   const value = Number(process.env.SNAPSHOT_RECENT_LOG_LIMIT ?? 2000);
   if (!Number.isFinite(value) || value <= 0) return 2000;
   return Math.floor(value);
+}
+
+function approvalMatchesStep(approvalId: string, stepId: string): boolean {
+  return stepId === approvalId || stepId.endsWith(`-${approvalId}`);
 }

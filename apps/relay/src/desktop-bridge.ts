@@ -245,6 +245,65 @@ export function parseRolloutEvents(
         activeTurnId = "";
         continue;
       }
+
+      if (eventType === "turn_aborted") {
+        const turnId = stringValue(payload.turn_id) ?? stringValue(payload.turnId) ?? activeTurnId;
+        if (!turnId) continue;
+        const summary = boundedText(stringValue(payload.reason)) || "Codex turn aborted";
+        events.push(logEvent(threadId, turnId, "system", summary, at, hostId));
+        events.push({
+          type: "turn.completed",
+          threadId,
+          turnId,
+          outcome: "failed",
+          summary,
+          at,
+          hostId,
+        });
+        activeTurnId = "";
+        continue;
+      }
+
+      if (isApprovalRequestEvent(eventType)) {
+        const turnId =
+          stringValue(payload.turn_id) ?? stringValue(payload.turnId) ?? activeTurnId;
+        if (!turnId) continue;
+        const approvalId = approvalIdFromPayload(payload, turnId);
+        events.push({
+          type: "approval.requested",
+          threadId,
+          turnId,
+          approvalId,
+          commandPreview: approvalCommandPreview(payload),
+          at,
+          hostId,
+        });
+        continue;
+      }
+
+      if (eventType === "dynamic_tool_call_response") {
+        const callId = stringValue(payload.call_id) ?? stringValue(payload.callId);
+        if (!callId) continue;
+        const turnId =
+          stringValue(payload.turn_id) ??
+          stringValue(payload.turnId) ??
+          activeTurnId ??
+          `${threadId}-unknown-turn`;
+        const toolName = stringValue(payload.tool) ?? "tool";
+        const args = objectValue(payload.arguments) ?? {};
+        const label = `${toolName}: ${commandFromToolPayload(args) || summarizeToolPayload(args)}`.slice(0, 120);
+        events.push({
+          type: "step.updated",
+          threadId,
+          turnId,
+          stepId: `codex-call-${callId}`,
+          label,
+          status: payload.success === false || payload.error ? "failed" : "completed",
+          at,
+          hostId,
+        });
+        continue;
+      }
     }
 
     if (entry.type === "response_item") {
@@ -363,6 +422,48 @@ function functionCallOutputFailed(output: string): boolean {
   if (exitCode?.[1] && Number(exitCode[1]) !== 0) return true;
   return /\b(error|failed|exception|traceback)\b/i.test(output) &&
     !/\b0 failures?\b/i.test(output);
+}
+
+function isApprovalRequestEvent(eventType: string | undefined): boolean {
+  return [
+    "approval_request",
+    "approval_requested",
+    "permission_request",
+    "permission_requested",
+    "dynamic_tool_call_request",
+  ].includes(eventType ?? "");
+}
+
+function approvalIdFromPayload(payload: Record<string, unknown>, turnId: string): string {
+  return (
+    stringValue(payload.approval_id) ??
+    stringValue(payload.approvalId) ??
+    stringValue(payload.tool_call_id) ??
+    stringValue(payload.toolCallId) ??
+    stringValue(payload.call_id) ??
+    stringValue(payload.callId) ??
+    `${turnId}-approval`
+  );
+}
+
+function approvalCommandPreview(payload: Record<string, unknown>): string {
+  const args = approvalArguments(payload);
+  const command =
+    commandFromToolPayload(payload) ??
+    commandFromToolPayload(args) ??
+    stringValue(payload.commandPreview) ??
+    stringValue(payload.tool) ??
+    "Codex action";
+  if (command !== stringValue(payload.tool) || Object.keys(args).length === 0) {
+    return command.slice(0, 240);
+  }
+  return `${command}: ${summarizeToolPayload(args)}`.slice(0, 240);
+}
+
+function approvalArguments(payload: Record<string, unknown>): Record<string, unknown> {
+  const raw = payload.arguments ?? payload.tool_input ?? payload.toolInput;
+  if (typeof raw === "string") return parseJsonObject(raw);
+  return objectValue(raw) ?? {};
 }
 
 export function parseTurnCompletedLog(row: CodexLogRow, hostId: string): CodexMonitorEvent[] {

@@ -809,6 +809,21 @@ describe("server", () => {
       },
     });
 
+    await app.inject({
+      method: "POST",
+      url: "/relay/events",
+      headers: { authorization: "Bearer relay-secret" },
+      payload: {
+        type: "turn.completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        outcome: "failed",
+        summary: "429 rate limit",
+        at: new Date().toISOString(),
+        hostId: "mac-mini",
+      },
+    });
+
     expect(pushProvider.sent).toEqual([
       {
         deviceToken: "device-token-1",
@@ -838,7 +853,7 @@ describe("server", () => {
         environment: "sandbox",
         notification: {
           title: "Codex 任务失败",
-          body: "Run command",
+          body: "429 rate limit",
           threadId: "thread-1",
           category: "failure",
         },

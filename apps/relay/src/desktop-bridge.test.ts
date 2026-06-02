@@ -503,6 +503,122 @@ describe("desktop bridge log parsing", () => {
     });
   });
 
+  test("marks aborted Codex turns from rollout JSONL as failed", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:15.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:18.000Z",
+        type: "event_msg",
+        payload: {
+          type: "turn_aborted",
+          turn_id: "turn-1",
+          reason: "429 rate limit",
+        },
+      }),
+    ].join("\n");
+
+    expect(parseRolloutEvents(content, "thread-1", "macbook")).toContainEqual({
+      type: "turn.completed",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      outcome: "failed",
+      summary: "429 rate limit",
+      at: "2026-05-27T08:53:18.000Z",
+      hostId: "macbook",
+    });
+  });
+
+  test("extracts explicit approval requests from rollout JSONL", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:15.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:16.000Z",
+        type: "event_msg",
+        payload: {
+          type: "approval_request",
+          turn_id: "turn-1",
+          approval_id: "approval-1",
+          command: "pnpm install",
+        },
+      }),
+    ].join("\n");
+
+    expect(parseRolloutEvents(content, "thread-1", "macbook")).toContainEqual({
+      type: "approval.requested",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      approvalId: "approval-1",
+      commandPreview: "pnpm install",
+      at: "2026-05-27T08:53:16.000Z",
+      hostId: "macbook",
+    });
+  });
+
+  test("extracts dynamic tool call requests and responses from rollout JSONL", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:15.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:16.000Z",
+        type: "event_msg",
+        payload: {
+          type: "dynamic_tool_call_request",
+          turnId: "turn-1",
+          callId: "call-1",
+          tool: "exec_command",
+          arguments: { cmd: "pnpm build" },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-27T08:53:17.000Z",
+        type: "event_msg",
+        payload: {
+          type: "dynamic_tool_call_response",
+          turn_id: "turn-1",
+          call_id: "call-1",
+          tool: "exec_command",
+          arguments: { cmd: "pnpm build" },
+          success: true,
+        },
+      }),
+    ].join("\n");
+
+    expect(parseRolloutEvents(content, "thread-1", "macbook")).toEqual(
+      expect.arrayContaining([
+        {
+          type: "approval.requested",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          approvalId: "call-1",
+          commandPreview: "pnpm build",
+          at: "2026-05-27T08:53:16.000Z",
+          hostId: "macbook",
+        },
+        {
+          type: "step.updated",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          stepId: "codex-call-call-1",
+          label: "exec_command: pnpm build",
+          status: "completed",
+          at: "2026-05-27T08:53:17.000Z",
+          hostId: "macbook",
+        },
+      ]),
+    );
+  });
+
   test("reads rollout files incrementally after a bounded bootstrap tail", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-monitor-rollout-"));
     const path = join(dir, "rollout.jsonl");
